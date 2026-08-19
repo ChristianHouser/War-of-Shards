@@ -2323,14 +2323,30 @@ btnCancel.onclick = () => {
   log('Attack cancelled.');
 };
 
+// A normal (non-special) character has no per-hero "Do Nothing" option and
+// must attack with its Basic if it can afford it — End Turn can only skip
+// the *optional* choice Heroes (isSpecial) get, never a mandatory normal
+// attack. Returns the first such character still owed its attack, or
+// undefined if none remain.
+function normalCharacterMustActFirst() {
+  return heroes.find(h => h.side === 'player' && !h.dead && !h.isSpecial &&
+    !h.actedThisTurn && h.mana >= basicCostFor(h));
+}
+
 // Lets the player skip straight to the enemy turn — banking mana for every
-// living hero that hasn't acted yet — instead of opening each hero's action
+// living Hero that hasn't acted yet — instead of opening each Hero's action
 // popup individually just to hit "Do Nothing". Still requires the turn's
-// swap first, same as attacking does.
+// swap first, same as attacking does, and is blocked while any normal
+// character can still make its mandatory attack.
 document.getElementById('btn-end-turn').onclick = () => {
   if (gamePhase !== 'battle' || isAnimating || currentTurn !== 'player') return;
   if (!swapUsedThisTurn) {
     log('Swap two tiles first — end turn is available after your swap.');
+    return;
+  }
+  const mustAct = normalCharacterMustActFirst();
+  if (mustAct) {
+    log(`${mustAct.name} can still attack and has no Do Nothing option — it must attack before you can end your turn.`);
     return;
   }
   pendingActionHero = null;
