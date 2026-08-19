@@ -124,6 +124,7 @@
       position: relative;
       transition: transform 0.1s, box-shadow 0.15s;
       user-select: none;
+      -webkit-touch-callout: none; /* iOS: suppress the long-press text-selection/callout menu on a draggable card */
       overflow: hidden;
       flex-shrink: 0;
     }
@@ -1206,6 +1207,7 @@ function renderDeployBattlefield() {
       slotEl = buildDeployPreviewCard('player', 'ranged', cd, null);
       slotEl.classList.remove('not-clickable');
       slotEl.style.cursor = 'grab';
+      slotEl.style.touchAction = 'none'; // this card is drag-repositionable on touch too now — don't let the browser treat the hold as a native gesture/text-selection
       slotEl.appendChild(buildCardActionBtn('−', 'remove', () => unplaceRanged(slotIndex)));
       slotEl.addEventListener('pointerdown', (e) => startRangedDrag(e, { charId: id, fromSlot: slotIndex }));
     } else {
@@ -1239,6 +1241,7 @@ function renderDeployBattlefield() {
       const card = buildDeployPreviewCard('player', 'melee', cd, null);
       card.classList.remove('not-clickable');
       card.style.cursor = 'grab';
+      card.style.touchAction = 'none'; // drag-repositionable on touch too — see the Ranged slot comment above
       card.style.position = 'absolute';
       card.style.left = '0';
       card.style.width = '100%';
@@ -1463,16 +1466,28 @@ function bandKey(band) {
   return band.type === 'aligned' ? `a${band.index}` : `b${band.indices[0]}`;
 }
 
-// Two Melee can no longer share the same row or half-step (see DECISIONS.md
-// — stacking was previously allowed, with a fan-out offset to keep stacked
-// cards visually distinct, but that let cards land directly on top of each
-// other and was removed in favor of one guard per band).
-function bandsEqual(a, b) {
+// Two Melee can no longer occupy visually-overlapping positions (see
+// DECISIONS.md — stacking was previously allowed, with a fan-out offset to
+// keep stacked cards visually distinct, but that let cards land directly on
+// top of each other and was removed in favor of one guard per band). This
+// isn't just "identical band" — an aligned card and an ADJACENT boundary
+// card overlap heavily on screen too (a boundary sits at the midpoint
+// between two row centers, and card height is a large fraction of the row
+// pitch, so it visually overlaps roughly the bottom/top half of both
+// neighboring aligned cards). Two boundary bands that merely share one
+// index but not the other (e.g. {0,1} and {1,2}) do NOT overlap — they sit
+// at different Y midpoints one full row apart — this is exactly the "two
+// Melee side by side" enemy formation pattern (see ENEMY_FORMATIONS).
+function bandsConflict(a, b) {
   if (!a || !b) return false;
-  return bandKey(a) === bandKey(b);
+  if (a.type === 'aligned' && b.type === 'aligned') return a.index === b.index;
+  if (a.type === 'boundary' && b.type === 'boundary') return a.indices[0] === b.indices[0];
+  const aligned = a.type === 'aligned' ? a : b;
+  const boundary = a.type === 'aligned' ? b : a;
+  return boundary.indices.includes(aligned.index);
 }
 function meleeBandOccupied(band, excludeIndex) {
-  return playerPlacements.melee.some((entry, i) => i !== excludeIndex && bandsEqual(entry.band, band));
+  return playerPlacements.melee.some((entry, i) => i !== excludeIndex && bandsConflict(entry.band, band));
 }
 
 // Runs after both the Ranged and Melee columns are in the DOM (so real
