@@ -186,11 +186,30 @@
     }
     .card-color-dot {
       position: absolute;
-      top: 3px; right: 3px;
+      top: 3px; left: 3px;
       width: 12px; height: 12px;
       border-radius: 50%;
       border: 1px solid #000;
     }
+    /* Tap-to-place / tap-to-remove badge, upper-right corner of a card —
+       the touch-friendly alternative to drag (see DECISIONS.md). Shares one
+       look, colored by whether it adds or removes. */
+    .card-action-btn {
+      position: absolute;
+      top: 2px; right: 2px;
+      width: 18px; height: 18px;
+      line-height: 16px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.6);
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-align: center;
+      cursor: pointer;
+      z-index: 2;
+      user-select: none;
+    }
+    .card-action-btn.add { border: 1px solid #2ecc71; color: #2ecc71; }
+    .card-action-btn.remove { border: 1px solid #e74c3c; color: #e74c3c; }
     .mana-bar-bg {
       width: 92%;
       height: 12px;
@@ -275,6 +294,7 @@
       padding: 6px 4px;
       text-align: center;
       cursor: pointer;
+      position: relative;
     }
     .roster-mini-card.selected {
       border-color: #00ffaa;
@@ -728,7 +748,7 @@ function log(msg) {
   if (logEl.children.length > 6) logEl.removeChild(logEl.lastChild);
 }
 
-const DEPLOY_INFO = `Deploy up to ${TEAM_CAP} heroes total. Drag a Ranged (🏹) hero onto any of the ${RANGED_SLOTS} Ranged slots — you choose the spot. Drag a Melee (⚔️) hero into the Melee column — it snaps to be level with whichever Ranged row you're closest to (gold highlight), or to the half-step gap between two adjacent rows to guard both (drop it straddling the gap). Any Ranged slot(s) it's actually protecting light up green. Drag any placed hero to move it, or drag it off the battlefield to remove it. Deploy at least one hero, then Start Battle.`;
+const DEPLOY_INFO = `Deploy up to ${TEAM_CAP} heroes total. Tap the + on a roster card to place it in the next open row from the top. Tap the − on a placed card to remove it. On a mouse, you can also drag any card for precise placement — including the half-step gap between two Ranged rows, to guard both at once. Deploy at least one hero, then Start Battle.`;
 const BATTLE_INFO = 'Your turn = <b>one</b> tile swap (must create a match) — then attack with anyone who can.<br>' +
   'Melee (⚔️) can\'t reach a Ranged (🏹) unit while any living enemy Melee is guarding that lane (fully aligned or half-step boundary between two lanes). Ranged can hit anyone.<br>' +
   'Once no one can attack, the enemy takes their turn automatically.';
@@ -1037,44 +1057,59 @@ function renderDeployFilterBar() {
   });
 }
 
-// The roster list scrolls vertically, and dragging a card to place it is
-// ALSO a largely-vertical gesture — so on touch, a plain scroll swipe and
-// "grab this card" are hard to tell apart from the very first pixel of
-// movement. Mirrors the standard mobile pattern (iOS/Android reorderable
-// lists, Trello, etc.): a quick swipe just scrolls the list; a brief
-// press-and-hold (roughly stationary for TOUCH_DRAG_HOLD_MS) "grabs" the
-// card and starts the normal drag. Mouse/pen have no such conflict (there's
-// no click-drag-to-scroll gesture to protect), so they keep the previous
-// instant-drag-on-pointerdown behavior. `card.style.touchAction = 'pan-y'`
-// (set by the caller, not here) is what lets the browser scroll natively
-// during the hold-decision window — if the browser takes over the touch as
-// a native pan, it fires `pointercancel`, which this treats the same as an
-// explicit over-threshold move (abort the pending grab).
-const TOUCH_DRAG_HOLD_MS = 250;
-const TOUCH_DRAG_CANCEL_PX = 10;
+// Drag (for both initial placement and repositioning an already-placed
+// card) is mouse-only — kept around for quick precise/desktop testing (e.g.
+// boundary/half-step Melee placement, which the +/- buttons below can't
+// express), per direct instruction. Touch and pen use the +/- buttons
+// exclusively instead of drag, which also sidesteps any conflict between
+// "drag to place" and "scroll the roster list" — a touch pointerdown on a
+// card no longer starts anything, so native scrolling just works. The
+// actual gate lives in startRangedDrag()/startMeleeDrag() themselves (one
+// choke point for all 4 drag-start call sites — roster cards and
+// already-placed battlefield cards, both types); this wrapper only exists
+// so roster cards go through the same function name as before.
 function attachRosterDragStart(el, startDragFn) {
-  el.addEventListener('pointerdown', (e) => {
-    if (gamePhase !== 'deploy') return;
-    if (e.pointerType !== 'touch') {
-      startDragFn(e); // mouse/pen: no scroll to protect, start immediately
-      return;
+  el.addEventListener('pointerdown', startDragFn);
+}
+
+// Tap-to-place / tap-to-remove: the primary interaction on touch, and a
+// quick shortcut on any input. Building block for the "+" buttons on roster
+// cards. `type` is 'ranged' | 'melee'.
+function autoPlaceCharacter(charId, type) {
+  if (gamePhase !== 'deploy') return;
+  if (placedCount() >= TEAM_CAP) { log(`Team is full (max ${TEAM_CAP}).`); return; }
+  if (type === 'ranged') {
+    const slotIndex = playerPlacements.ranged.findIndex(id => id === null);
+    if (slotIndex === -1) { log('No empty Ranged slot.'); return; }
+    playerPlacements.ranged[slotIndex] = charId;
+  } else {
+    // "The row starting from the top": the first Ranged row (0..RANGED_SLOTS-1)
+    // not already guarded by an ALIGNED Melee — matches Ranged's own "first
+    // empty slot" behavior and never needs a boundary/half-step (that's
+    // still drag-only, on a mouse).
+    let rowIndex = -1;
+    for (let i = 0; i < RANGED_SLOTS; i++) {
+      if (!meleeBandOccupied({ type: 'aligned', index: i }, -1)) { rowIndex = i; break; }
     }
-    const sx = e.clientX, sy = e.clientY;
-    const timer = setTimeout(() => { cleanup(); startDragFn(e); }, TOUCH_DRAG_HOLD_MS);
-    function onMove(ev) {
-      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > TOUCH_DRAG_CANCEL_PX) cleanup();
-    }
-    function onAbort() { cleanup(); }
-    function cleanup() {
-      clearTimeout(timer);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onAbort);
-      window.removeEventListener('pointercancel', onAbort);
-    }
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onAbort);
-    window.addEventListener('pointercancel', onAbort);
-  });
+    if (rowIndex === -1) { log('No open row for another Melee.'); return; }
+    playerPlacements.melee.push({ charId, band: { type: 'aligned', index: rowIndex } });
+  }
+  deployAvailable = deployAvailable.filter(id => id !== charId);
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+}
+
+// Small circular "+"/"−" badge, upper-right corner of a card. `onAction`
+// fires on click/tap; pointerdown is stopped from bubbling so tapping the
+// badge on a mouse never also triggers the card's own drag-start.
+function buildCardActionBtn(symbol, kind, onAction) {
+  const btn = document.createElement('div');
+  btn.className = `card-action-btn ${kind}`;
+  btn.textContent = symbol;
+  btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+  btn.addEventListener('click', (e) => { e.stopPropagation(); onAction(); });
+  return btn;
 }
 
 // Both Ranged and Melee roster cards are drag-to-place: Ranged is dropped
@@ -1106,9 +1141,9 @@ function renderDeployRoster() {
     card.innerHTML = `
       <div class="mini-color-dot" style="background:${COLOR_HEX[cd.color]}"></div>
       <div class="mini-name">${cd.name}${cd.isSpecial ? ' ★' : ''}</div>
-      <div class="mini-sub">${cd.type === 'ranged' ? '🏹' : '⚔️'} drag to place · ${cd.class} · ${cd.hp} HP</div>
+      <div class="mini-sub">${cd.type === 'ranged' ? '🏹' : '⚔️'} tap + or drag · ${cd.class} · ${cd.hp} HP</div>
     `;
-    card.style.touchAction = 'pan-y'; // let the list scroll natively on touch; see attachRosterDragStart
+    card.appendChild(buildCardActionBtn('+', 'add', () => autoPlaceCharacter(id, cd.type)));
     if (cd.type === 'ranged') {
       attachRosterDragStart(card, (e) => startRangedDrag(e, { charId: id, fromSlot: null }));
     } else {
@@ -1167,15 +1202,16 @@ function renderDeployBattlefield() {
     let slotEl;
     if (id) {
       const cd = charById(id);
+      const slotIndex = i;
       slotEl = buildDeployPreviewCard('player', 'ranged', cd, null);
       slotEl.classList.remove('not-clickable');
       slotEl.style.cursor = 'grab';
-      slotEl.style.touchAction = 'none';
-      slotEl.addEventListener('pointerdown', (e) => startRangedDrag(e, { charId: id, fromSlot: i }));
+      slotEl.appendChild(buildCardActionBtn('−', 'remove', () => unplaceRanged(slotIndex)));
+      slotEl.addEventListener('pointerdown', (e) => startRangedDrag(e, { charId: id, fromSlot: slotIndex }));
     } else {
       slotEl = document.createElement('div');
       slotEl.className = 'card empty-slot not-clickable';
-      slotEl.innerHTML = `<div class="card-icon" style="opacity:0.4;">🏹</div><div style="font-size:0.5rem;color:#777;">drag here</div>`;
+      slotEl.innerHTML = `<div class="card-icon" style="opacity:0.4;">🏹</div><div style="font-size:0.5rem;color:#777;">tap + to place</div>`;
     }
     slotEl.dataset.role = 'player-ranged-slot';
     slotEl.dataset.slot = i;
@@ -1194,7 +1230,7 @@ function renderDeployBattlefield() {
   if (playerPlacements.melee.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'card empty-slot not-clickable';
-    empty.innerHTML = `<div class="card-icon" style="opacity:0.4;">⚔️</div><div style="font-size:0.5rem;color:#777;">drag here</div>`;
+    empty.innerHTML = `<div class="card-icon" style="opacity:0.4;">⚔️</div><div style="font-size:0.5rem;color:#777;">tap + to place</div>`;
     meleeCol.appendChild(empty);
   } else {
     const filledMask = playerPlacements.ranged.map(id => id !== null);
@@ -1203,7 +1239,6 @@ function renderDeployBattlefield() {
       const card = buildDeployPreviewCard('player', 'melee', cd, null);
       card.classList.remove('not-clickable');
       card.style.cursor = 'grab';
-      card.style.touchAction = 'none';
       card.style.position = 'absolute';
       card.style.left = '0';
       card.style.width = '100%';
@@ -1213,6 +1248,7 @@ function renderDeployBattlefield() {
       tag.className = 'coverage-tag';
       tag.textContent = coverageLabel(coverage);
       card.appendChild(tag);
+      card.appendChild(buildCardActionBtn('−', 'remove', () => unplaceMelee(i)));
       card.addEventListener('pointerdown', (e) => startMeleeDrag(e, { charId: entry.charId, meleeIndex: i }));
       meleeCol.appendChild(card);
     });
@@ -1324,6 +1360,7 @@ function rangedSlotEls() {
 // slots — the player picks exactly which one.
 function startRangedDrag(e, opts) {
   if (gamePhase !== 'deploy') return;
+  if (e.pointerType !== 'mouse') return; // touch/pen: use the +/- buttons instead (see DECISIONS.md)
   e.preventDefault();
   const cd = charById(opts.charId);
   dragState = { kind: 'ranged', charId: opts.charId, fromSlot: opts.fromSlot, ghostEl: buildGhost(cd, 'ranged'), hoverSlot: null };
@@ -1394,6 +1431,7 @@ function onRangedDragEnd(e) {
 // computed live from wherever the Ranged slots currently are on screen.
 function startMeleeDrag(e, opts) {
   if (gamePhase !== 'deploy') return;
+  if (e.pointerType !== 'mouse') return; // touch/pen: use the +/- buttons instead (see DECISIONS.md)
   e.preventDefault();
   const cd = charById(opts.charId);
   dragState = { kind: 'melee', charId: opts.charId, meleeIndex: opts.meleeIndex, ghostEl: buildGhost(cd, 'melee'), previewBand: null };
