@@ -492,6 +492,14 @@
 
   <div id="battlefield"></div>
 
+  <!-- End Turn sits between the Battlefield (above) and the Match-3 board
+       (below) so the player can bank remaining mana and hand the turn to
+       the enemy without opening every hero's action popup to pick "Do
+       Nothing" one at a time. -->
+  <div id="end-turn-wrap" style="display:none; margin:6px 0; text-align:center;">
+    <button id="btn-end-turn" style="width:100%; max-width:420px; background:#27ae60;">End Turn (bank remaining mana)</button>
+  </div>
+
   <!-- ===== Deployment-only panel ===== -->
   <div id="deploy-panel">
     <div id="deploy-status"></div>
@@ -1009,6 +1017,7 @@ function initDeployment() {
   document.getElementById('board-wrap').style.display = 'none';
   document.getElementById('turn-indicator').style.display = 'none';
   document.getElementById('battle-controls').style.display = 'none';
+  document.getElementById('end-turn-wrap').style.display = 'none';
   renderDeployFilterBar();
   renderDeployRoster();
   renderDeployBattlefield();
@@ -2314,6 +2323,25 @@ btnCancel.onclick = () => {
   log('Attack cancelled.');
 };
 
+// Lets the player skip straight to the enemy turn — banking mana for every
+// living hero that hasn't acted yet — instead of opening each hero's action
+// popup individually just to hit "Do Nothing". Still requires the turn's
+// swap first, same as attacking does.
+document.getElementById('btn-end-turn').onclick = () => {
+  if (gamePhase !== 'battle' || isAnimating || currentTurn !== 'player') return;
+  if (!swapUsedThisTurn) {
+    log('Swap two tiles first — end turn is available after your swap.');
+    return;
+  }
+  pendingActionHero = null;
+  if (modal) modal.style.display = 'none';
+  heroes.filter(h => h.side === 'player' && !h.dead && !h.actedThisTurn)
+    .forEach(h => { h.actedThisTurn = true; });
+  heroes.forEach(updateHeroUI);
+  log('You end your turn, banking remaining mana.');
+  endPlayerTurn();
+};
+
 // Which ranged lanes are currently protected by a living melee hero on the
 // given side (each melee hero carries its own `coverage`, assigned at
 // deployment — either aligned to one lane, a boundary between two, or null).
@@ -2600,6 +2628,7 @@ function startBattle() {
   document.getElementById('board-wrap').style.display = 'block';
   document.getElementById('turn-indicator').style.display = 'block';
   document.getElementById('battle-controls').style.display = 'flex';
+  document.getElementById('end-turn-wrap').style.display = 'block';
 
   buildArmies();
   selectedTile = null;

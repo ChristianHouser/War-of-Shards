@@ -81,6 +81,8 @@ A Runic Wave travels down all `RANGED_SLOTS` rows/lanes simultaneously and, in e
 - **Basic Attack**: Low mana/stamina cost. Always available.
 - **Abilities**: Unlocked through progression. Higher mana/stamina cost. More powerful effects or utility.
 - Heroes can be leveled and developed to gain new abilities.
+- A player turn always includes exactly one Match-3 swap; after that, each living player hero may act once (a normal character's only option is Basic; a Hero (`isSpecial`) additionally gets a "Do Nothing" choice in its action popup, to bank mana instead of attacking). The turn auto-advances to the enemy once every living hero has either acted or can't afford its own Basic cost.
+- **End Turn button**: sits between the Battlefield and the Match-3 board (`#end-turn-wrap`), visible only during battle. Lets the player skip straight to the enemy turn in one tap — banking mana for every hero (Heroes and regular characters alike) that hasn't acted yet — instead of opening each Hero's popup individually to pick "Do Nothing" (and regular characters have no per-hero way to skip at all otherwise). Still requires the turn's swap first, same as attacking.
 
 ## Auto-Play Toggle
 - Players can turn on auto-play for the upper battlefield.
