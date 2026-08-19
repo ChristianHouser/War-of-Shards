@@ -19,19 +19,12 @@
       overflow-x: hidden;
     }
     h1 { font-size: 1.1rem; margin-bottom: 6px; color: #ffd700; }
-    .topbar { width: 100%; max-width: 420px; display: flex; justify-content: center; margin-bottom: 8px; }
-    .nav-btn {
-      background: #0f3460;
-      color: #ffd700;
-      border: 2px solid #ffd700;
-      border-radius: 8px;
-      padding: 7px 14px;
-      font-size: 0.75rem;
-      font-weight: bold;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-block;
-    }
+    /* .info (the instructional blurb) and #log (the running message feed)
+       are no longer shown on either screen, per direct request — kept in
+       the DOM (just display:none) rather than removed outright, since
+       log() writes to #log unconditionally on nearly every game action
+       and has no null-guard; deleting the element would throw. */
+    .info, #log { display: none; }
     .info {
       font-size: 0.72rem;
       color: #aaa;
@@ -520,10 +513,11 @@
     button:active { background: #c81e45; }
     button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
 
-    /* ===== Placement screen controls row (Formation / Deployed count / Filter) ===== */
-    /* Sits just outside the placement box, not overlapping its cards: a row
-       of its own directly underneath, centered as a group. Order is fixed
-       (Formation, then the count, then Filter) per direct request. */
+    /* ===== Placement screen controls (Formation / Deployed count / Codex, then Filter below) ===== */
+    /* Sits just outside the placement box, not overlapping its cards: two
+       rows of their own directly underneath, each centered as a group.
+       Row order is fixed per direct request: Formation, count, Codex —
+       then Filter alone on the row below. */
     #placement-controls {
       width: 100%;
       max-width: 220px;
@@ -533,7 +527,14 @@
       justify-content: center;
       gap: 8px;
     }
-    #btn-formation, #btn-filter-toggle {
+    #filter-toggle-wrap {
+      width: 100%;
+      max-width: 220px;
+      margin: 6px auto 0;
+      display: flex;
+      justify-content: center;
+    }
+    #btn-formation, #btn-filter-toggle, #btn-character-codex {
       background: #0f3460;
       color: #ffd700;
       border: 2px solid #ffd700;
@@ -543,8 +544,10 @@
       font-weight: bold;
       cursor: pointer;
       white-space: nowrap;
+      text-decoration: none;
+      display: inline-block;
     }
-    #btn-formation:active, #btn-filter-toggle:active { background: #1a4a80; }
+    #btn-formation:active, #btn-filter-toggle:active, #btn-character-codex:active { background: #1a4a80; }
     #btn-filter-toggle.open { background: #ffd700; color: #1a1a2e; }
     .formation-text { text-align: left; font-size: 0.78rem; line-height: 1.55; color: #ddd; margin-bottom: 12px; }
     .formation-text div { margin-bottom: 4px; }
@@ -601,21 +604,29 @@
 </head>
 <body>
   <h1>Match-3 × Battlefield Test</h1>
-  <div class="topbar"><a class="nav-btn" href="Roster.html">☰ Character Codex</a></div>
 
   <div class="info" id="info-text"></div>
   <div id="log">Ready. Build your team below.</div>
 
   <div id="battlefield"></div>
 
-  <!-- Formation button: sits just outside/underneath the placement box
-       (not overlapping its cards). Deployment-only, shown by
-       initDeployment() and hidden by startBattle() — static elements
-       rather than something renderDeployBattlefield() rebuilds each time,
-       since (unlike the cards) they never need to change. -->
+  <!-- Formation button + deployed count + Character Codex link: sit just
+       outside/underneath the placement box (not overlapping its cards).
+       Deployment-only, shown by initDeployment() and hidden by
+       startBattle() — static elements rather than something
+       renderDeployBattlefield() rebuilds each time, since (unlike the
+       cards) they never need to change. Character Codex used to be a
+       permanent top-of-page link on both screens; it's deployment-only
+       now (folded into this same show/hide toggle) per direct request. -->
   <div id="placement-controls" style="display:none;">
     <button id="btn-formation">🛡 Formation</button>
     <div id="deploy-status"></div>
+    <a id="btn-character-codex" href="Roster.html">☰ Codex</a>
+  </div>
+
+  <!-- Filter toggle sits on its own row, centered, directly below the row
+       above — opens the collapsible panel right beneath it. -->
+  <div id="filter-toggle-wrap" style="display:none;">
     <button id="btn-filter-toggle">▾ Filter</button>
   </div>
 
@@ -1236,7 +1247,11 @@ function initDeployment() {
   document.getElementById('battle-controls').style.display = 'none';
   document.getElementById('end-turn-wrap').style.display = 'none';
   document.getElementById('placement-controls').style.display = 'flex';
+  document.getElementById('filter-toggle-wrap').style.display = 'flex';
   document.getElementById('deploy-filter-bar').style.display = 'none';
+  const filterToggleBtn = document.getElementById('btn-filter-toggle');
+  filterToggleBtn.textContent = '▾ Filter';
+  filterToggleBtn.classList.remove('open');
   renderDeployFilterBar();
   renderDeployRoster();
   renderDeployBattlefield();
@@ -2969,6 +2984,7 @@ function startBattle() {
   document.getElementById('battle-controls').style.display = 'flex';
   document.getElementById('end-turn-wrap').style.display = 'block';
   document.getElementById('placement-controls').style.display = 'none';
+  document.getElementById('filter-toggle-wrap').style.display = 'none';
   document.getElementById('deploy-filter-bar').style.display = 'none';
 
   buildArmies();
