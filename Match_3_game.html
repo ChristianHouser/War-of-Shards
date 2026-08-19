@@ -458,10 +458,15 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.7rem;
+      font-size: 0.9rem;
       font-weight: bold;
       color: rgba(0,0,0,0.35);
       user-select: none;
+      /* Tap-hold-and-drag-to-swap needs the browser to never intercept the
+         gesture as a native scroll/selection — every touch that starts on
+         a tile is a game gesture, not a page scroll. */
+      touch-action: none;
+      -webkit-touch-callout: none;
     }
     .tile.empty {
       background: #1a1a2e;
@@ -942,7 +947,6 @@ function coverageLabel(coverage) {
 let board = [];          // board[y][x] = color string
 let boardSpecial = [];   // boardSpecial[y][x] = null | 'bomb' | 'crystal' (parallel to board)
 let heroes = [];         // live combat heroes (only populated once battle starts)
-let selectedTile = null; // {x,y}
 let selectedHero = null; // hero object
 let selectedAttackType = 'basic'; // 'basic' | 'special'
 let isAnimating = false;
@@ -1915,7 +1919,7 @@ function onMeleeDragEnd(e) {
 //                            Runic Crystal. Activates the same two ways a
 //                            Bomb's first trigger does: caught in a fresh
 //                            same-color group, OR the player directly TAPS
-//                            its tile (see onTileClick) — either opens its
+//                            its tile (see activateCrystalTap) — either opens its
 //                            choice modal. Being touched by an unrelated
 //                            swap that doesn't connect into a match still
 //                            just clears it like an ordinary tile (its
@@ -1969,11 +1973,11 @@ function renderBoard() {
         tile.textContent = '';
       } else {
         tile.className = `tile ${color}` + (special ? ` special-${special}` : '');
-        tile.textContent = special === 'bomb' ? '💣' : special === 'crystal' ? '🔮' : color[0].toUpperCase();
+        tile.textContent = special === 'bomb' ? '💣' : special === 'crystal' ? '🔮' : '';
       }
       tile.dataset.x = x;
       tile.dataset.y = y;
-      tile.addEventListener('click', () => onTileClick(x, y));
+      tile.addEventListener('pointerdown', (e) => onTilePointerDown(e, x, y));
       boardEl.appendChild(tile);
     }
   }
@@ -1984,7 +1988,7 @@ function getTileEl(x, y) {
 }
 
 // Cheap existence check ("did this swap create/leave any match on the
-// board?") — used by onTileClick and the cascade-continuation check. Kept
+// board?") — used by attemptTileSwap and the cascade-continuation check. Kept
 // separate from findMatchGroups() (which does the more expensive connected-
 // component/shape work) since most calls here only need a yes/no answer.
 function findMatchedCells() {
@@ -2398,13 +2402,12 @@ function processExplosionQueue(queue, idx, toClear, queuedKeys, logParts, done) 
 // `activationSeeds` ([{x,y,color,type}], optional) are special tiles the
 // player deliberately activated without necessarily forming a new match —
 // an Arcane Bomb via a swap that touches it, or a Runic Crystal via a
-// direct tap — see onTileClick — resolved through the same explosion-queue
-// machinery.
+// direct tap — see attemptTileSwap/activateCrystalTap — resolved through
+// the same explosion-queue machinery.
 function processMatches(swapHint, activationSeeds) {
   const groups = findMatchGroups();
   if (groups.length === 0 && (!activationSeeds || activationSeeds.length === 0)) {
     isAnimating = false;
-    selectedTile = null;
     checkAutoEndPlayerTurn();
     return;
   }
@@ -2423,7 +2426,7 @@ function processMatches(swapHint, activationSeeds) {
     // (its cell joins a newly-formed >=3 connected group — i.e. the player
     // swapped in at least two more tiles of its color, connected to it)
     // auto-activates: a Bomb detonates, a Crystal opens its choice modal —
-    // same as a direct tap does for a Crystal (see onTileClick). This is in
+    // same as a direct tap does for a Crystal (see activateCrystalTap). This is in
     // addition to a Bomb's own "any adjacent swap touches it" trigger.
     const k = `${x},${y}`;
     if (queuedKeys.has(k)) return;
@@ -2479,7 +2482,6 @@ function processMatches(swapHint, activationSeeds) {
           processMatches(); // cascades never carry a swap hint or activation seed
         } else {
           isAnimating = false;
-          selectedTile = null;
           checkAutoEndPlayerTurn();
         }
       }, 220);
@@ -2487,7 +2489,20 @@ function processMatches(swapHint, activationSeeds) {
   });
 }
 
-function onTileClick(x, y) {
+// ---------- BOARD TILE DRAG-TO-SWAP ----------
+// Tap-and-hold a tile, then drag/swipe it onto a neighboring tile (up,
+// down, left, right) to swap — the standard match-3 gesture (Candy Crush
+// and friends). The swap fires as soon as the drag crosses a small
+// distance threshold in a clear direction; no need to release first, and
+// only one swap can happen per press-drag gesture. A plain tap (no drag)
+// does nothing on an ordinary tile — the one exception is a Runic
+// Crystal, which activates immediately on a tap regardless of drag
+// distance (its own separate trigger, see activateCrystalTap below).
+const TILE_SWIPE_THRESHOLD_PX = 16;
+let tileDragState = null; // {x, y, pointerId, startClientX, startClientY, swapped}
+
+function onTilePointerDown(e, x, y) {
+  if (tileDragState) return; // a gesture is already in progress (e.g. a second finger) — ignore
   if (gamePhase !== 'battle' || isAnimating || currentTurn !== 'player') return;
   if (swapUsedThisTurn) {
     log('You already used this turn\'s one board action (swap or crystal tap) — attack with anyone who can, then the turn ends.');
@@ -2497,94 +2512,110 @@ function onTileClick(x, y) {
     selectedHero = null;
     heroes.forEach(updateHeroUI);
   }
+  if (!board[y][x]) return; // ignore presses on empty tiles
 
-  // Ignore clicks on empty tiles
-  if (!board[y][x]) return;
+  e.preventDefault();
+  tileDragState = { x, y, pointerId: e.pointerId, startClientX: e.clientX, startClientY: e.clientY, swapped: false };
+  const el = getTileEl(x, y);
+  if (el) el.classList.add('selected');
+  window.addEventListener('pointermove', onTilePointerMove);
+  window.addEventListener('pointerup', onTilePointerUp);
+  window.addEventListener('pointercancel', onTilePointerCancel);
+}
 
-  // Runic Crystal: a direct tap activates it immediately (opens the choice
-  // modal) instead of joining the normal select-then-swap flow. This is one
-  // of its two triggers — the other is being caught in a fresh same-color
-  // match (see queueExplosionIfSpecial), same as an Arcane Bomb. Being
-  // merely touched by an unrelated swap that doesn't form a match through
-  // its cell still does nothing (see the swap branch below). A crystal's
-  // own cell can never be used as one half of a normal two-tile swap once
-  // it exists on the board. Counts as this turn's one board action, same
-  // as a normal swap.
-  if (boardSpecial[y][x] === 'crystal') {
-    if (selectedTile) {
-      const prevEl = getTileEl(selectedTile.x, selectedTile.y);
-      if (prevEl) prevEl.classList.remove('selected');
-      selectedTile = null;
-    }
-    const el = getTileEl(x, y);
-    if (el) el.classList.add('selected');
+function onTilePointerMove(e) {
+  if (!tileDragState || tileDragState.swapped || e.pointerId !== tileDragState.pointerId) return;
+  const dx = e.clientX - tileDragState.startClientX;
+  const dy = e.clientY - tileDragState.startClientY;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < TILE_SWIPE_THRESHOLD_PX) return;
+
+  const { x, y } = tileDragState;
+  const horizontal = Math.abs(dx) > Math.abs(dy);
+  const nx = horizontal ? x + (dx > 0 ? 1 : -1) : x;
+  const ny = horizontal ? y : y + (dy > 0 ? 1 : -1);
+  tileDragState.swapped = true; // only one swap per gesture — ignore any further movement
+  endTileDrag();
+  attemptTileSwap(x, y, nx, ny);
+}
+
+function onTilePointerUp(e) {
+  if (!tileDragState || e.pointerId !== tileDragState.pointerId) return;
+  const { x, y, swapped } = tileDragState;
+  endTileDrag();
+  if (swapped) return; // already handled in onTilePointerMove
+
+  // No drag happened — a plain tap. Only a Runic Crystal responds to this.
+  if (boardSpecial[y][x] === 'crystal') activateCrystalTap(x, y);
+}
+
+function onTilePointerCancel(e) {
+  if (!tileDragState || e.pointerId !== tileDragState.pointerId) return;
+  endTileDrag();
+}
+
+function endTileDrag() {
+  if (tileDragState) {
+    const el = getTileEl(tileDragState.x, tileDragState.y);
+    if (el) el.classList.remove('selected');
+  }
+  tileDragState = null;
+  window.removeEventListener('pointermove', onTilePointerMove);
+  window.removeEventListener('pointerup', onTilePointerUp);
+  window.removeEventListener('pointercancel', onTilePointerCancel);
+}
+
+// A direct tap on a Runic Crystal activates it immediately (opens the
+// choice modal) — one of its two triggers, the other being caught in a
+// fresh same-color match (see queueExplosionIfSpecial). A crystal's own
+// cell can never be one half of a swap (see the guard in attemptTileSwap),
+// so this tap-to-activate path is its only way to trigger deliberately.
+// Counts as this turn's one board action, same as a swap.
+function activateCrystalTap(x, y) {
+  const el = getTileEl(x, y);
+  if (el) el.classList.add('selected');
+  isAnimating = true;
+  swapUsedThisTurn = true;
+  setBoardLocked(true);
+  setTimeout(() => {
+    if (el) el.classList.remove('selected');
+    processMatches(null, [{x, y, color: board[y][x], type: 'crystal'}]);
+  }, 120);
+}
+
+// Swaps two adjacent cells (color AND special status move together), then
+// checks whether the swap created a match or touched an Arcane Bomb (which
+// activates from any adjacent swap, matched or not) — reverts if neither
+// happened. A Runic Crystal can never be one half of a swap; dragging onto
+// or off of one is simply a no-op (use activateCrystalTap's direct-tap
+// path instead).
+function attemptTileSwap(x1, y1, x2, y2) {
+  if (x2 < 0 || x2 >= COLS || y2 < 0 || y2 >= ROWS) return; // dragged off the edge of the board
+  if (!board[y1][x1] || !board[y2][x2]) return;
+  if (boardSpecial[y1][x1] === 'crystal' || boardSpecial[y2][x2] === 'crystal') return;
+
+  const origColor = board[y1][x1], origSpecial = boardSpecial[y1][x1];
+  const destColor = board[y2][x2], destSpecial = boardSpecial[y2][x2];
+  board[y1][x1] = destColor; boardSpecial[y1][x1] = destSpecial;
+  board[y2][x2] = origColor; boardSpecial[y2][x2] = origSpecial;
+  renderBoard();
+
+  const {hasMatches} = findMatchedCells();
+  const activationSeeds = [];
+  if (boardSpecial[y1][x1] === 'bomb') activationSeeds.push({x: x1, y: y1, color: board[y1][x1], type: 'bomb'});
+  if (boardSpecial[y2][x2] === 'bomb') activationSeeds.push({x: x2, y: y2, color: board[y2][x2], type: 'bomb'});
+
+  if (hasMatches || activationSeeds.length > 0) {
     isAnimating = true;
-    swapUsedThisTurn = true;
+    swapUsedThisTurn = true; // a turn only gets one swap
     setBoardLocked(true);
-    setTimeout(() => {
-      if (el) el.classList.remove('selected');
-      processMatches(null, [{x, y, color: board[y][x], type: 'crystal'}]);
-    }, 120);
-    return;
-  }
-
-  if (!selectedTile) {
-    selectedTile = {x, y};
-    const el = getTileEl(x, y);
-    if (el) el.classList.add('selected');
-    return;
-  }
-
-  // second click
-  const x1 = selectedTile.x, y1 = selectedTile.y;
-  const prevEl = getTileEl(x1, y1);
-  if (prevEl) prevEl.classList.remove('selected');
-
-  // adjacent?
-  const dx = Math.abs(x - x1), dy = Math.abs(y - y1);
-  if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
-    // swap (color AND special status move together)
-    const tmpColor = board[y1][x1], tmpSpecial = boardSpecial[y1][x1];
-    board[y1][x1] = board[y][x];
-    boardSpecial[y1][x1] = boardSpecial[y][x];
-    board[y][x] = tmpColor;
-    boardSpecial[y][x] = tmpSpecial;
-    renderBoard();
-
-    // A swap that touches an Arcane Bomb is always allowed — that's what
-    // "activated" (as opposed to "matched") means for a bomb, a deliberate
-    // detonation even without forming a new color-match — in addition to the
-    // normal "did this create a match" check. Runic Crystals are excluded
-    // here (and can't be, since a crystal tile is intercepted above before
-    // ever reaching this swap logic) — a crystal only ever activates via a
-    // direct tap.
-    const {hasMatches} = findMatchedCells();
-    const activationSeeds = [];
-    if (boardSpecial[y1][x1] === 'bomb') activationSeeds.push({x: x1, y: y1, color: board[y1][x1], type: 'bomb'});
-    if (boardSpecial[y][x] === 'bomb') activationSeeds.push({x, y, color: board[y][x], type: 'bomb'});
-
-    if (hasMatches || activationSeeds.length > 0) {
-      isAnimating = true;
-      selectedTile = null;
-      swapUsedThisTurn = true; // a turn only gets one swap
-      setBoardLocked(true);
-      const swapHint = [{x: x1, y: y1}, {x, y}];
-      setTimeout(() => processMatches(swapHint, activationSeeds), 120);
-    } else {
-      // revert
-      board[y][x] = board[y1][x1];
-      boardSpecial[y][x] = boardSpecial[y1][x1];
-      board[y1][x1] = tmpColor;
-      boardSpecial[y1][x1] = tmpSpecial;
-      renderBoard();
-      log('No match – swap reverted');
-      selectedTile = null;
-    }
+    const swapHint = [{x: x1, y: y1}, {x: x2, y: y2}];
+    setTimeout(() => processMatches(swapHint, activationSeeds), 120);
   } else {
-    // not adjacent – select the new one
-    selectedTile = {x, y};
-    const el = getTileEl(x, y);
-    if (el) el.classList.add('selected');
+    // revert
+    board[y1][x1] = origColor; boardSpecial[y1][x1] = origSpecial;
+    board[y2][x2] = destColor; boardSpecial[y2][x2] = destSpecial;
+    renderBoard();
+    log('No match – swap reverted');
   }
 }
 
@@ -2905,7 +2936,7 @@ function updateTurnUI() {
 function endPlayerTurn() {
   if (currentTurn !== 'player' || isAnimating) return;
   selectedHero = null;
-  selectedTile = null;
+  endTileDrag();
   heroes.forEach(updateHeroUI);
   currentTurn = 'enemy';
   setBoardLocked(true);
@@ -2988,7 +3019,7 @@ function startBattle() {
   document.getElementById('deploy-filter-bar').style.display = 'none';
 
   buildArmies();
-  selectedTile = null;
+  endTileDrag();
   selectedHero = null;
   selectedAttackType = 'basic';
   pendingActionHero = null;
@@ -3010,7 +3041,7 @@ function startBattle() {
 function restartBattle() {
   if (heroes.length === 0) { startBattle(); return; }
   heroes.forEach(h => { h.hp = h.maxHp; h.mana = 0; h.dead = false; h.actedThisTurn = false; });
-  selectedTile = null;
+  endTileDrag();
   selectedHero = null;
   selectedAttackType = 'basic';
   pendingActionHero = null;
