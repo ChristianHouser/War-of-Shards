@@ -1907,9 +1907,10 @@ function onMeleeDragEnd(e) {
 //                            player hero of that color, no other effect.
 //   Match of 4           -> same 1 mana/tile, PLUS one cell becomes an
 //                            Arcane Bomb instead of clearing. When later
-//                            matched (caught in a fresh same-color group)
-//                            OR activated (any swap that touches its cell,
-//                            even without forming a new match) it clears
+//                            matched (caught in a fresh same-color group),
+//                            activated (any swap that touches its cell,
+//                            even without forming a new match), OR directly
+//                            TAPPED (see activateSpecialTap) it clears
 //                            itself + its 4 orthogonal neighbors (all 5
 //                            still pay out mana by their OWN color), and
 //                            deals 2 damage to a random living enemy
@@ -1917,9 +1918,9 @@ function onMeleeDragEnd(e) {
 //   Match of 5+ (straight run, or a T/L/plus formed by two intersecting
 //   runs of >=3)          -> same 1 mana/tile, PLUS one cell becomes a
 //                            Runic Crystal. Activates the same two ways a
-//                            Bomb's first trigger does: caught in a fresh
+//                            Bomb's first two triggers do: caught in a fresh
 //                            same-color group, OR the player directly TAPS
-//                            its tile (see activateCrystalTap) — either opens its
+//                            its tile (see activateSpecialTap) — either opens its
 //                            choice modal. Being touched by an unrelated
 //                            swap that doesn't connect into a match still
 //                            just clears it like an ordinary tile (its
@@ -2402,7 +2403,7 @@ function processExplosionQueue(queue, idx, toClear, queuedKeys, logParts, done) 
 // `activationSeeds` ([{x,y,color,type}], optional) are special tiles the
 // player deliberately activated without necessarily forming a new match —
 // an Arcane Bomb via a swap that touches it, or a Runic Crystal via a
-// direct tap — see attemptTileSwap/activateCrystalTap — resolved through
+// direct tap — see attemptTileSwap/activateSpecialTap — resolved through
 // the same explosion-queue machinery.
 function processMatches(swapHint, activationSeeds) {
   const groups = findMatchGroups();
@@ -2426,8 +2427,8 @@ function processMatches(swapHint, activationSeeds) {
     // (its cell joins a newly-formed >=3 connected group — i.e. the player
     // swapped in at least two more tiles of its color, connected to it)
     // auto-activates: a Bomb detonates, a Crystal opens its choice modal —
-    // same as a direct tap does for a Crystal (see activateCrystalTap). This is in
-    // addition to a Bomb's own "any adjacent swap touches it" trigger.
+    // same as a direct tap does for either (see activateSpecialTap). This is
+    // in addition to a Bomb's own "any adjacent swap touches it" trigger.
     const k = `${x},${y}`;
     if (queuedKeys.has(k)) return;
     queuedKeys.add(k);
@@ -2495,9 +2496,9 @@ function processMatches(swapHint, activationSeeds) {
 // and friends). The swap fires as soon as the drag crosses a small
 // distance threshold in a clear direction; no need to release first, and
 // only one swap can happen per press-drag gesture. A plain tap (no drag)
-// does nothing on an ordinary tile — the one exception is a Runic
-// Crystal, which activates immediately on a tap regardless of drag
-// distance (its own separate trigger, see activateCrystalTap below).
+// does nothing on an ordinary tile — the exceptions are the two special
+// tiles (Arcane Bomb, Runic Crystal), which activate immediately on a tap
+// regardless of drag distance (see activateSpecialTap below).
 const TILE_SWIPE_THRESHOLD_PX = 16;
 let tileDragState = null; // {x, y, pointerId, startClientX, startClientY, swapped}
 
@@ -2544,8 +2545,11 @@ function onTilePointerUp(e) {
   endTileDrag();
   if (swapped) return; // already handled in onTilePointerMove
 
-  // No drag happened — a plain tap. Only a Runic Crystal responds to this.
-  if (boardSpecial[y][x] === 'crystal') activateCrystalTap(x, y);
+  // No drag happened — a plain tap. Both special tiles respond to this:
+  // for a Crystal it's one of its two triggers; for a Bomb it's a third
+  // way in, alongside being matched into a group or touched by a swap.
+  const type = boardSpecial[y][x];
+  if (type === 'crystal' || type === 'bomb') activateSpecialTap(x, y, type);
 }
 
 function onTilePointerCancel(e) {
@@ -2564,13 +2568,17 @@ function endTileDrag() {
   window.removeEventListener('pointercancel', onTilePointerCancel);
 }
 
-// A direct tap on a Runic Crystal activates it immediately (opens the
-// choice modal) — one of its two triggers, the other being caught in a
-// fresh same-color match (see queueExplosionIfSpecial). A crystal's own
-// cell can never be one half of a swap (see the guard in attemptTileSwap),
-// so this tap-to-activate path is its only way to trigger deliberately.
-// Counts as this turn's one board action, same as a swap.
-function activateCrystalTap(x, y) {
+// A direct tap on a Bomb or Crystal activates it immediately (opens the
+// Crystal's choice modal, or detonates the Bomb). For a Crystal this is
+// one of its two triggers, the other being caught in a fresh same-color
+// match (see queueExplosionIfSpecial); a Crystal's own cell can also never
+// be one half of a swap (see the guard in attemptTileSwap), so tapping is
+// its only way to trigger deliberately. A Bomb has no such restriction —
+// it can still be dragged into a swap (which also activates it, matched
+// or not) — this tap is simply an additional, faster way to set it off
+// without needing a neighbor to swap with. Counts as this turn's one
+// board action either way.
+function activateSpecialTap(x, y, type) {
   const el = getTileEl(x, y);
   if (el) el.classList.add('selected');
   isAnimating = true;
@@ -2578,7 +2586,7 @@ function activateCrystalTap(x, y) {
   setBoardLocked(true);
   setTimeout(() => {
     if (el) el.classList.remove('selected');
-    processMatches(null, [{x, y, color: board[y][x], type: 'crystal'}]);
+    processMatches(null, [{x, y, color: board[y][x], type}]);
   }, 120);
 }
 
@@ -2586,7 +2594,7 @@ function activateCrystalTap(x, y) {
 // checks whether the swap created a match or touched an Arcane Bomb (which
 // activates from any adjacent swap, matched or not) — reverts if neither
 // happened. A Runic Crystal can never be one half of a swap; dragging onto
-// or off of one is simply a no-op (use activateCrystalTap's direct-tap
+// or off of one is simply a no-op (use activateSpecialTap's direct-tap
 // path instead).
 function attemptTileSwap(x1, y1, x2, y2) {
   if (x2 < 0 || x2 >= COLS || y2 < 0 || y2 >= ROWS) return; // dragged off the edge of the board

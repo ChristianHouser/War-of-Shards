@@ -3,6 +3,13 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-19, match-3 board pt.2) — Arcane Bomb now also activates on a direct tap
+- [x] **Fixed: tapping an Arcane Bomb did nothing — only a touching swap detonated it.** User report: "Tapping the arcane bomb does not make it explode, I have to swap a tile with it for it to activate." This was a real gap, not by design — the Crystal had tap-to-activate from the start, but the Bomb never did.
+- [x] Generalized `activateCrystalTap(x, y)` → `activateSpecialTap(x, y, type)`, called for both `'crystal'` and `'bomb'` from `onTilePointerUp()`'s no-drag (plain tap) branch. The Bomb keeps every one of its existing triggers too (matched into a group, any adjacent swap touching it) — tap is purely additive, and (unlike the Crystal) the Bomb can still be freely dragged as part of a normal swap.
+- [x] Verified via scripted Playwright: a plain tap (pointerdown+pointerup, zero movement) on a Bomb now detonates it and deals damage; Crystal tap-to-open-modal still works (regression check); Bomb still detonates via a touching swap with no color-match involved (regression check).
+- [x] Updated CLAUDE.md's Core Rules and context/GAME_MECHANICS.md.
+- [ ] Next AI: no known issues.
+
 ## Recently Done (2026-08-19, match-3 board) — Removed tile letters, replaced tap-tap swap with tap-hold-drag/swipe
 - [x] **Removed the color-letter (R/G/B/Y/P) from normal board tiles** — `renderBoard()` now sets `textContent` to `''` for a plain colored tile; only special tiles still show anything (💣 bomb, 🔮 crystal). Bumped `.tile`'s `font-size` from 0.7rem to 0.9rem now that it only ever needs to fit a single emoji, not a letter.
 - [x] **Replaced the old tap-tile-1-then-tap-tile-2 swap flow with tap-and-hold-then-drag/swipe-onto-a-neighbor**, per direct instruction ("like most well known match 3 games do it"). `onTileClick()` is gone, replaced by `onTilePointerDown()`/`onTilePointerMove()`/`onTilePointerUp()`/`onTilePointerCancel()` (pointer events — works for touch, mouse, and pen alike, mirroring the drag-to-place pattern already used on the deployment screen). A swap fires as soon as the drag crosses a 16px threshold in a clear direction (`TILE_SWIPE_THRESHOLD_PX`) — no need to release first, one swap per gesture. Added `touch-action: none` to `.tile` so touch drags on the board are never intercepted as a native page scroll.
