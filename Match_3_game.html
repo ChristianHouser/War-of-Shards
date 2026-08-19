@@ -319,19 +319,16 @@
     }
 
     /* ===== MELEE DRAG-TO-PLACE ===== */
+    /* The ghost is a real .card element (see buildGhost) so it looks
+       identical to the placed/roster card it came from — this class only
+       adds the positioning/floating mechanics on top, it doesn't restyle
+       the card look itself (that all comes from .card + its own modifiers,
+       e.g. .special, [data-color]). */
     .drag-ghost {
       position: fixed;
       z-index: 200;
       pointer-events: none;
-      width: 90px;
-      padding: 6px;
-      background: #22223a;
-      border: 2px solid #00ffaa;
-      border-radius: 8px;
-      text-align: center;
-      font-size: 0.6rem;
-      font-weight: bold;
-      color: #fff;
+      width: 95px;
       box-shadow: 0 4px 14px rgba(0,0,0,0.6);
       opacity: 0.95;
     }
@@ -564,11 +561,11 @@ const RANGED_SLOTS = TEAM_CAP; // Ranged column always shows this many fixed slo
 // The enemy roster is randomized fresh every time the player (re)enters
 // deployment (see randomizeEnemyTeam() below and its call in
 // initDeployment()) rather than fixed. `let` (not `const`) because
-// randomizeEnemyTeam() reassigns this. The shape — TEAM_CAP total, 2 Ranged
-// + 3 Melee — matches what the enemy team has always had; the placeholder
-// value here only matters until the first randomizeEnemyTeam() call, which
-// always runs before this is ever read (initDeployment calls it before any
-// rendering or battle setup).
+// randomizeEnemyTeam() reassigns this. The shape is always TEAM_CAP total,
+// but the Ranged/Melee split itself is now also randomized — see
+// ENEMY_FORMATIONS below; the placeholder value here only matters until the
+// first randomizeEnemyTeam() call, which always runs before this is ever
+// read (initDeployment calls it before any rendering or battle setup).
 let ENEMY_TEAM = {
   ranged: ['lumi', 'saryn'], // lanes 0, 1
   melee: [
@@ -577,6 +574,33 @@ let ENEMY_TEAM = {
     { charId: 'brick', coverage: { type: 'aligned', lane: 1 } }
   ]
 };
+
+// Two possible enemy formation shapes, picked with equal probability each
+// time deployment is (re)entered (see randomizeEnemyTeam()). Each always
+// totals TEAM_CAP (5) — only how it splits between Ranged and Melee, and how
+// the Melee cover the Ranged lanes, differs:
+//  - 3 Melee / 2 Ranged: the original static team's lane pattern (one Melee
+//    aligned to each lane, one straddling the boundary between them).
+//  - 2 Melee / 3 Ranged: two boundary guards side by side, each covering an
+//    adjacent pair of lanes (0/1 and 1/2) — together they cover all 3 lanes
+//    (lane 1 doubly so) with only 2 Melee.
+const ENEMY_FORMATIONS = [
+  {
+    rangedCount: 2,
+    meleeBands: [
+      { type: 'aligned', lane: 0 },
+      { type: 'boundary', lanes: [0, 1] },
+      { type: 'aligned', lane: 1 }
+    ]
+  },
+  {
+    rangedCount: 3,
+    meleeBands: [
+      { type: 'boundary', lanes: [0, 1] },
+      { type: 'boundary', lanes: [1, 2] }
+    ]
+  }
+];
 
 function charById(id) { return CHARACTERS.find(c => c.id === id); }
 
@@ -596,30 +620,33 @@ function shuffledCopy(arr) {
 function pickN(pool, n) { return shuffledCopy(pool).slice(0, n); }
 function randomIntUpTo(maxInclusive) { return Math.floor(Math.random() * (maxInclusive + 1)); }
 
-// Builds one candidate { rangedIds, meleeIds } draw. The hero cap (<=2 of 5)
-// is enforced BY CONSTRUCTION, not by rejecting random draws and hoping —
-// with 32 of 45 characters being Heroes, a fully-random 5-character draw
-// would satisfy "at most 2 Heroes" only rarely, so this explicitly decides
-// how many Heroes/non-Heroes go into each role (Ranged always needs exactly
-// 2 total characters, Melee always needs exactly 3) before picking specific
-// characters from the matching type+specialty bucket.
-function drawEnemyRoster(buckets) {
-  const RANGED_COUNT = 2, MELEE_COUNT = 3, MAX_HEROES = 2;
+// Builds one candidate { rangedIds, meleeIds } draw for the given split. The
+// hero cap (<=2 of 5) is enforced BY CONSTRUCTION, not by rejecting random
+// draws and hoping — with 32 of 45 characters being Heroes, a fully-random
+// 5-character draw would satisfy "at most 2 Heroes" only rarely, so this
+// explicitly decides how many Heroes/non-Heroes go into each role before
+// picking specific characters from the matching type+specialty bucket.
+// rangedCount/meleeCount come from the chosen ENEMY_FORMATIONS entry and
+// always sum to TEAM_CAP; both are always >= MAX_HEROES, so rangedHeroCount/
+// meleeHeroCount (each capped at MAX_HEROES by construction) never exceed
+// the role's own count.
+function drawEnemyRoster(buckets, rangedCount, meleeCount) {
+  const MAX_HEROES = 2;
   const heroCount = randomIntUpTo(MAX_HEROES); // 0, 1, or 2 Heroes total this draw
   const rangedHeroCount = randomIntUpTo(heroCount); // rest of heroCount goes to Melee
   const meleeHeroCount = heroCount - rangedHeroCount;
   const rangedIds = shuffledCopy([
     ...pickN(buckets.rangedHero, rangedHeroCount),
-    ...pickN(buckets.rangedNonHero, RANGED_COUNT - rangedHeroCount)
+    ...pickN(buckets.rangedNonHero, rangedCount - rangedHeroCount)
   ]);
   const meleeIds = shuffledCopy([
     ...pickN(buckets.meleeHero, meleeHeroCount),
-    ...pickN(buckets.meleeNonHero, MELEE_COUNT - meleeHeroCount)
+    ...pickN(buckets.meleeNonHero, meleeCount - meleeHeroCount)
   ]);
   return { rangedIds, meleeIds };
 }
 
-function buildRandomEnemyRoster() {
+function buildRandomEnemyRoster(rangedCount, meleeCount) {
   const MIN_COLORS = 4;
   const buckets = { rangedHero: [], rangedNonHero: [], meleeHero: [], meleeNonHero: [] };
   CHARACTERS.forEach(c => {
@@ -632,25 +659,21 @@ function buildRandomEnemyRoster() {
   // the hard cap below is just a safety net against a pathological miss.
   let draw = null;
   for (let attempt = 0; attempt < 50; attempt++) {
-    const candidate = drawEnemyRoster(buckets);
+    const candidate = drawEnemyRoster(buckets, rangedCount, meleeCount);
     const colorCount = new Set([...candidate.rangedIds, ...candidate.meleeIds].map(id => charById(id).color)).size;
     if (colorCount >= MIN_COLORS) { draw = candidate; break; }
   }
-  return draw || drawEnemyRoster(buckets); // fallback: hero cap still holds even if color target is missed
+  return draw || drawEnemyRoster(buckets, rangedCount, meleeCount); // fallback: hero cap still holds even if color target is missed
 }
 
-// Same fixed lane-coverage pattern the original static team used (lane0 /
-// boundary-both / lane1) — a property of Ranged always having exactly 2
-// lanes, independent of which characters end up filling the 5 roles.
+// Picks one of ENEMY_FORMATIONS at random, then draws characters into it.
 function randomizeEnemyTeam() {
-  const { rangedIds, meleeIds } = buildRandomEnemyRoster();
+  const formation = ENEMY_FORMATIONS[Math.floor(Math.random() * ENEMY_FORMATIONS.length)];
+  const meleeCount = formation.meleeBands.length;
+  const { rangedIds, meleeIds } = buildRandomEnemyRoster(formation.rangedCount, meleeCount);
   ENEMY_TEAM = {
     ranged: rangedIds,
-    melee: [
-      { charId: meleeIds[0], coverage: { type: 'aligned', lane: 0 } },
-      { charId: meleeIds[1], coverage: { type: 'boundary', lanes: [0, 1] } },
-      { charId: meleeIds[2], coverage: { type: 'aligned', lane: 1 } }
-    ]
+    melee: meleeIds.map((charId, i) => ({ charId, coverage: formation.meleeBands[i] }))
   };
 }
 // basicCostFor / basicDmgFor / maxManaFor come from characters.js — shared
@@ -1157,30 +1180,23 @@ function renderDeployBattlefield() {
   battlefieldEl.appendChild(meleeCol);
   if (playerPlacements.melee.length > 0) layoutMeleeCards();
 
-  // --- Enemy Melee / Ranged: display only, not draggable. ENEMY_TEAM is
-  // randomized fresh per deployment (see randomizeEnemyTeam) but always has
-  // exactly TEAM_CAP characters, same as before, so it's still centered
-  // vertically in its column to avoid looking pinned to the top next to the
-  // taller player columns. ---
-  const enemyMeleeCol = makeColumnEl('enemy', 'ENEMY ⚔️');
-  enemyMeleeCol.classList.add('center-content', 'side-divider'); // marks the YOU/ENEMY boundary
-  ENEMY_TEAM.melee.forEach(entry => {
-    const cd = charById(entry.charId);
-    const card = buildDeployPreviewCard('enemy', 'melee', cd, null);
-    const tag = document.createElement('div');
-    tag.className = 'coverage-tag';
-    tag.textContent = coverageLabel(entry.coverage);
-    card.appendChild(tag);
-    enemyMeleeCol.appendChild(card);
-  });
-  battlefieldEl.appendChild(enemyMeleeCol);
-
-  const enemyRangedCol = makeColumnEl('enemy', 'ENEMY 🏹');
-  enemyRangedCol.classList.add('center-content');
-  ENEMY_TEAM.ranged.forEach(id => {
-    enemyRangedCol.appendChild(buildDeployPreviewCard('enemy', 'ranged', charById(id), null));
-  });
-  battlefieldEl.appendChild(enemyRangedCol);
+  // --- Enemy: kept a surprise during deployment. ENEMY_TEAM is randomized
+  // fresh per deployment (see randomizeEnemyTeam) and its Ranged/Melee split
+  // itself now varies too (see ENEMY_FORMATIONS) — so even revealing a
+  // Melee/Ranged count breakdown here would leak which formation was drawn.
+  // A single mystery column replaces the two real enemy columns entirely;
+  // the actual roster only ever renders once battle starts, via
+  // renderBattlefield() (which reads the same ENEMY_TEAM, already decided —
+  // this doesn't re-randomize anything, it just doesn't show it yet). ---
+  const enemyHiddenCol = makeColumnEl('enemy', 'ENEMY ❓');
+  enemyHiddenCol.classList.add('center-content', 'side-divider'); // marks the YOU/ENEMY boundary
+  enemyHiddenCol.style.flex = '2 1 0'; // roughly the combined width of the two real enemy columns it replaces
+  const mysteryCard = document.createElement('div');
+  mysteryCard.className = 'card empty-slot not-clickable';
+  mysteryCard.style.margin = '0 auto';
+  mysteryCard.innerHTML = `<div class="card-icon" style="opacity:0.6;">❓</div><div style="font-size:0.55rem;color:#999;">Hidden until<br>battle starts</div>`;
+  enemyHiddenCol.appendChild(mysteryCard);
+  battlefieldEl.appendChild(enemyHiddenCol);
 }
 
 // ---------- DRAG-TO-PLACE (shared helpers) ----------
@@ -1188,18 +1204,21 @@ function rectContains(rect, x, y) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
-function buildGhost(cd, icon) {
-  const ghost = document.createElement('div');
-  ghost.className = 'drag-ghost';
-  ghost.textContent = `${icon} ${cd.name}`;
+// Builds the element that follows the cursor/finger while dragging — reuses
+// buildDeployPreviewCard so it's the exact same markup as a placed card
+// (color gradient, icon, name, HP text, special glow), just floated on top
+// via the .drag-ghost positioning class. `type` is 'ranged' | 'melee'.
+function buildGhost(cd, type) {
+  const ghost = buildDeployPreviewCard('player', type, cd, null);
+  ghost.classList.add('drag-ghost');
   document.body.appendChild(ghost);
   return ghost;
 }
 
 function moveGhost(x, y) {
   if (!dragState) return;
-  dragState.ghostEl.style.left = (x - 45) + 'px';
-  dragState.ghostEl.style.top = (y - 20) + 'px';
+  dragState.ghostEl.style.left = (x - 47) + 'px';
+  dragState.ghostEl.style.top = (y - 39) + 'px';
 }
 
 // Pure function: given the on-screen rects of all RANGED_SLOTS Ranged slots
@@ -1267,7 +1286,7 @@ function startRangedDrag(e, opts) {
   if (gamePhase !== 'deploy') return;
   e.preventDefault();
   const cd = charById(opts.charId);
-  dragState = { kind: 'ranged', charId: opts.charId, fromSlot: opts.fromSlot, ghostEl: buildGhost(cd, '🏹'), hoverSlot: null };
+  dragState = { kind: 'ranged', charId: opts.charId, fromSlot: opts.fromSlot, ghostEl: buildGhost(cd, 'ranged'), hoverSlot: null };
   moveGhost(e.clientX, e.clientY);
   window.addEventListener('pointermove', onRangedDragMove);
   window.addEventListener('pointerup', onRangedDragEnd);
@@ -1337,7 +1356,7 @@ function startMeleeDrag(e, opts) {
   if (gamePhase !== 'deploy') return;
   e.preventDefault();
   const cd = charById(opts.charId);
-  dragState = { kind: 'melee', charId: opts.charId, meleeIndex: opts.meleeIndex, ghostEl: buildGhost(cd, '⚔️'), previewBand: null };
+  dragState = { kind: 'melee', charId: opts.charId, meleeIndex: opts.meleeIndex, ghostEl: buildGhost(cd, 'melee'), previewBand: null };
   moveGhost(e.clientX, e.clientY);
   window.addEventListener('pointermove', onMeleeDragMove);
   window.addEventListener('pointerup', onMeleeDragEnd);
@@ -1356,6 +1375,18 @@ function highlightCoverage(slotEls, coverage) {
 function bandKey(band) {
   if (!band) return 'none';
   return band.type === 'aligned' ? `a${band.index}` : `b${band.indices[0]}`;
+}
+
+// Two Melee can no longer share the same row or half-step (see DECISIONS.md
+// — stacking was previously allowed, with a fan-out offset to keep stacked
+// cards visually distinct, but that let cards land directly on top of each
+// other and was removed in favor of one guard per band).
+function bandsEqual(a, b) {
+  if (!a || !b) return false;
+  return bandKey(a) === bandKey(b);
+}
+function meleeBandOccupied(band, excludeIndex) {
+  return playerPlacements.melee.some((entry, i) => i !== excludeIndex && bandsEqual(entry.band, band));
 }
 
 // Runs after both the Ranged and Melee columns are in the DOM (so real
@@ -1457,10 +1488,20 @@ function onMeleeDragEnd(e) {
     // Repositioning: just update which row/half-step it's on. Array
     // position is irrelevant now — every card is placed independently by
     // its own band, not by list order.
+    if (meleeBandOccupied(band, dragState.meleeIndex)) {
+      log('Another Melee is already guarding that row — drop on a different row or half-step.');
+      dragState = null;
+      return;
+    }
     playerPlacements.melee[dragState.meleeIndex].band = band;
   } else {
     if (placedCount() >= TEAM_CAP) {
       log(`Team is full (max ${TEAM_CAP}).`);
+      dragState = null;
+      return;
+    }
+    if (meleeBandOccupied(band, -1)) {
+      log('Another Melee is already guarding that row — drop on a different row or half-step.');
       dragState = null;
       return;
     }
