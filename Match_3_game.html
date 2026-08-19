@@ -998,6 +998,7 @@ function updateHeroUI(h) {
   if (bar) bar.style.width = `${(h.mana / h.maxMana) * 100}%`;
   const num = h.el.querySelector('.mana-num');
   if (num) num.textContent = `${h.mana}/${h.maxMana}`;
+  updateEndTurnButtonState();
 }
 
 // ---------- DEPLOYMENT ----------
@@ -2333,6 +2334,21 @@ function normalCharacterMustActFirst() {
     !h.actedThisTurn && h.mana >= basicCostFor(h));
 }
 
+// Grays out the End Turn button (and blocks clicks via `disabled`) whenever
+// it isn't actually usable yet: outside the player's turn, before the
+// turn's swap, or while a normal character still owes its mandatory
+// attack. Called from updateHeroUI/updateTurnUI/checkAutoEndPlayerTurn so
+// it stays in sync with every state change that could affect eligibility.
+function updateEndTurnButtonState() {
+  const btn = document.getElementById('btn-end-turn');
+  if (!btn) return;
+  const ready = gamePhase === 'battle' && currentTurn === 'player' &&
+    swapUsedThisTurn && !normalCharacterMustActFirst();
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '1' : '0.4';
+  btn.style.cursor = ready ? 'pointer' : 'not-allowed';
+}
+
 // Lets the player skip straight to the enemy turn — banking mana for every
 // living Hero that hasn't acted yet — instead of opening each Hero's action
 // popup individually just to hit "Do Nothing". Still requires the turn's
@@ -2532,6 +2548,7 @@ function performAttack(attacker, target, attackType) {
 // Nothing, OR it simply can't afford its own Basic Attack cost (normal
 // heroes have no "Do Nothing" and must attack if they're able to).
 function checkAutoEndPlayerTurn() {
+  updateEndTurnButtonState();
   if (currentTurn !== 'player' || isAnimating) return;
   if (!swapUsedThisTurn) return; // a turn always includes a swap — can't end before that happens
   const livingPlayers = heroes.filter(h => h.side === 'player' && !h.dead);
@@ -2562,6 +2579,7 @@ function updateTurnUI() {
     el.textContent = 'Battle Over';
     el.style.color = '#ff0';
   }
+  updateEndTurnButtonState();
 }
 
 function endPlayerTurn() {

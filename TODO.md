@@ -3,6 +3,13 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-19, latest of all) — End Turn button now visually grayed out, not just click-blocked
+- [x] **Grayed out the End Turn button** while it's unusable, per direct instruction ("Gray out end turn button until all normal characters have attacked that round") — previously it was only gated at click-time (clicking did nothing but log a message), giving no visual signal it was unavailable.
+- [x] Added `updateEndTurnButtonState()` (~near `normalCharacterMustActFirst`): sets `btn.disabled` and dims to `opacity: 0.4` (same enabled/disabled visual convention already used by the Basic/Special modal buttons) unless it's the player's turn, the swap has been used, AND no normal character can still afford its attack — otherwise full opacity and `disabled = false`. Hooked into `updateHeroUI()`, `updateTurnUI()`, and the top of `checkAutoEndPlayerTurn()` so it recomputes on every state change that could affect eligibility (swap completion, any attack, mana grants, turn start/end) without needing a new call site at every mutation.
+- [x] Verified via scripted Playwright across the full sequence: disabled pre-swap, still disabled post-swap while the normal character (Vesper Quill) hasn't attacked, auto-enables the instant she attacks, and a click at that point correctly ends the turn.
+- [x] Updated context/GAME_MECHANICS.md and context/DECISIONS.md.
+- [ ] Next AI: no known issues.
+
 ## Recently Done (2026-08-19, even later) — End Turn now blocked until normal characters attack
 - [x] **Fixed a bug in the just-added End Turn button**: it let a normal (non-`isSpecial`) character skip its mandatory attack, which contradicts the pre-existing rule (see `checkAutoEndPlayerTurn`'s comment) that normal characters have no "Do Nothing" and must attack if they can afford it. User report: "End turn button should not be accessible until after normal characters attack. They must attack if possible."
 - [x] Added `normalCharacterMustActFirst()` (~before the button handler): finds the first living, unacted player character with `isSpecial === false` that can still afford its Basic. The button's click handler now checks this after the swap gate and, if found, logs `"<name> can still attack and has no Do Nothing option — it must attack before you can end your turn."` and does nothing — same click-time-gate pattern as the existing swap check, not a grayed-out/disabled style. Heroes (`isSpecial: true`) are unaffected — the button still banks their mana freely once every normal character has either attacked or can no longer afford to.
