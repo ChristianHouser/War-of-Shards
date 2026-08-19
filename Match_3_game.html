@@ -59,7 +59,6 @@
        standard-size cards — they no longer need to be pixel-aligned to each
        other, since lane/coverage is tracked in data, not visual row-matching. */
     #battlefield {
-      position: relative; /* containing block for #btn-formation (deployment only) */
       display: flex;
       justify-content: space-between;
       /* stretch (not flex-start): all 4 columns match the tallest column's
@@ -490,11 +489,19 @@
     button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
 
     /* ===== Formation button + explainer modal (deployment/placement screen only) ===== */
+    /* Sits just outside the placement box, not overlapping its cards: a row
+       of its own directly underneath, right-aligned so the button still
+       reads as "bottom right" relative to the box above it. Width matches
+       #battlefield.deploy-battlefield-narrow so "right-aligned" lines up
+       with that box's actual right edge, not the wider page/body width. */
+    #formation-btn-wrap {
+      width: 100%;
+      max-width: 220px;
+      margin: 6px auto 0;
+      display: flex;
+      justify-content: flex-end;
+    }
     #btn-formation {
-      position: absolute;
-      bottom: 6px;
-      right: 6px;
-      z-index: 5;
       background: #0f3460;
       color: #ffd700;
       border: 2px solid #ffd700;
@@ -566,6 +573,15 @@
   <div id="log">Ready. Build your team below.</div>
 
   <div id="battlefield"></div>
+
+  <!-- Formation button: sits just outside/underneath the placement box
+       (not overlapping its cards), right-aligned. Deployment-only, shown
+       by initDeployment() and hidden by startBattle() — a static element
+       rather than something renderDeployBattlefield() rebuilds each time,
+       since (unlike the cards) it never needs to change. -->
+  <div id="formation-btn-wrap" style="display:none;">
+    <button id="btn-formation">🛡 Formation</button>
+  </div>
 
   <!-- End Turn sits between the Battlefield (above) and the Match-3 board
        (below) so the player can bank remaining mana and hand the turn to
@@ -1176,6 +1192,7 @@ function initDeployment() {
   document.getElementById('turn-indicator').style.display = 'none';
   document.getElementById('battle-controls').style.display = 'none';
   document.getElementById('end-turn-wrap').style.display = 'none';
+  document.getElementById('formation-btn-wrap').style.display = 'flex';
   renderDeployFilterBar();
   renderDeployRoster();
   renderDeployBattlefield();
@@ -1435,17 +1452,6 @@ function renderDeployBattlefield() {
   // via renderBattlefield() — ENEMY_TEAM itself is unaffected, still
   // decided fresh at deployment-entry time by randomizeEnemyTeam().
   battlefieldEl.classList.add('deploy-battlefield-narrow');
-
-  // Formation button: bottom-right corner of the placement box, opens the
-  // explainer modal. Rebuilt fresh on every render (like the rest of this
-  // function's content) since battlefieldEl.innerHTML was just cleared —
-  // #battlefield itself never leaves the DOM, so pairing this with
-  // `position: relative` on it is enough to anchor the button reliably.
-  const formationBtn = document.createElement('button');
-  formationBtn.id = 'btn-formation';
-  formationBtn.textContent = '🛡 Formation';
-  formationBtn.onclick = openFormationModal;
-  battlefieldEl.appendChild(formationBtn);
 }
 
 // ---------- DRAG-TO-PLACE (shared helpers) ----------
@@ -2221,6 +2227,7 @@ function openFormationModal() {
   formationModal.style.display = 'flex';
 }
 
+document.getElementById('btn-formation').onclick = openFormationModal;
 document.getElementById('btn-formation-close').onclick = () => { formationModal.style.display = 'none'; };
 document.getElementById('formation-prev').onclick = () => goToFormationSlide(formationIndex - 1);
 document.getElementById('formation-next').onclick = () => goToFormationSlide(formationIndex + 1);
@@ -2870,6 +2877,7 @@ function startBattle() {
   document.getElementById('turn-indicator').style.display = 'block';
   document.getElementById('battle-controls').style.display = 'flex';
   document.getElementById('end-turn-wrap').style.display = 'block';
+  document.getElementById('formation-btn-wrap').style.display = 'none';
 
   buildArmies();
   selectedTile = null;
