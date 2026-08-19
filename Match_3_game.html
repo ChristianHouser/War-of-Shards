@@ -80,6 +80,15 @@
       border-radius: 10px;
       border: 2px solid #0f3460;
     }
+    /* Deployment-only, once the enemy section is removed from that screen:
+       caps the box to roughly half its normal width so the two remaining
+       player columns' cards stay close to their original size instead of
+       stretching to fill the full 420px row. The parent body's flex
+       `align-items: center` already centers a narrower block horizontally
+       on its own, no extra margin needed. */
+    #battlefield.deploy-battlefield-narrow {
+      max-width: 220px;
+    }
     .bf-column {
       display: flex;
       flex-direction: column;
@@ -897,6 +906,7 @@ function positionMeleeCardPairs(pairs) {
 
 function renderBattlefield() {
   battlefieldEl.innerHTML = '';
+  battlefieldEl.classList.remove('deploy-battlefield-narrow'); // deployment-only width cap, see renderDeployBattlefield
 
   // --- Player Ranged: same fixed RANGED_SLOTS grid as deployment (so a
   // filled slot's row never shifts), but a slot that was never filled during
@@ -1207,7 +1217,7 @@ function renderDeployBattlefield() {
   battlefieldEl.innerHTML = '';
 
   // --- Player Ranged: TEAM_CAP fixed slots, always shown, drag to fill/move ---
-  const rangedCol = makeColumnEl('player', 'YOU 🏹');
+  const rangedCol = makeColumnEl('player', '🏹');
   for (let i = 0; i < RANGED_SLOTS; i++) {
     const id = playerPlacements.ranged[i];
     let slotEl;
@@ -1236,7 +1246,7 @@ function renderDeployBattlefield() {
   // exactly what it's dropped near. Position (`band`) and what it actually
   // protects (`coverage`, derived fresh here from band + which Ranged slots
   // are filled right now) are independent — see the comment near TEAM_CAP.
-  const meleeCol = makeColumnEl('player', 'YOU ⚔️');
+  const meleeCol = makeColumnEl('player', '⚔️');
   meleeCol.dataset.role = 'player-melee-dropzone';
   meleeCol.classList.add('dropzone-hint', 'melee-positioned');
   if (playerPlacements.melee.length === 0) {
@@ -1269,23 +1279,15 @@ function renderDeployBattlefield() {
   battlefieldEl.appendChild(meleeCol);
   if (playerPlacements.melee.length > 0) layoutMeleeCards();
 
-  // --- Enemy: kept a surprise during deployment. ENEMY_TEAM is randomized
-  // fresh per deployment (see randomizeEnemyTeam) and its Ranged/Melee split
-  // itself now varies too (see ENEMY_FORMATIONS) — so even revealing a
-  // Melee/Ranged count breakdown here would leak which formation was drawn.
-  // A single mystery column replaces the two real enemy columns entirely;
-  // the actual roster only ever renders once battle starts, via
-  // renderBattlefield() (which reads the same ENEMY_TEAM, already decided —
-  // this doesn't re-randomize anything, it just doesn't show it yet). ---
-  const enemyHiddenCol = makeColumnEl('enemy', 'ENEMY ❓');
-  enemyHiddenCol.classList.add('center-content', 'side-divider'); // marks the YOU/ENEMY boundary
-  enemyHiddenCol.style.flex = '2 1 0'; // roughly the combined width of the two real enemy columns it replaces
-  const mysteryCard = document.createElement('div');
-  mysteryCard.className = 'card empty-slot not-clickable';
-  mysteryCard.style.margin = '0 auto';
-  mysteryCard.innerHTML = `<div class="card-icon" style="opacity:0.6;">❓</div><div style="font-size:0.55rem;color:#999;">Hidden until<br>battle starts</div>`;
-  enemyHiddenCol.appendChild(mysteryCard);
-  battlefieldEl.appendChild(enemyHiddenCol);
+  // No enemy section is shown on the placement screen at all (per direct
+  // instruction) — the two player columns above are the only content, and
+  // fill the full centered #battlefield box between them (see the
+  // #deploy-battlefield-narrow CSS rule for the width cap that keeps their
+  // cards from stretching too wide now that nothing else shares the row).
+  // The enemy's actual roster still only ever renders once battle starts,
+  // via renderBattlefield() — ENEMY_TEAM itself is unaffected, still
+  // decided fresh at deployment-entry time by randomizeEnemyTeam().
+  battlefieldEl.classList.add('deploy-battlefield-narrow');
 }
 
 // ---------- DRAG-TO-PLACE (shared helpers) ----------
