@@ -3,6 +3,12 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-19) — GitHub Pages hosting + mobile roster scroll fix
+- [x] Enabled GitHub Pages (Settings → Pages, `main` branch, `/root`) at `https://christianhouser.github.io/War-of-Shards/`, so the game is live on a real URL for phone testing and for the user's collaborators. Added a root `index.html` that redirects to `Match_3_game.html` so the bare Pages URL works without knowing the filename.
+- [x] **Fixed roster list being unscrollable on touch** — user report: "too touchy for mobile," any touch on the roster list immediately grabbed a card instead of letting the list scroll. Root cause: roster cards had `touch-action: none` + an unconditional `preventDefault()` on `pointerdown`, so the browser never got a chance to scroll. Fixed via `attachRosterDragStart()` (~line 1040): on touch, drag-start is now delayed behind a 250ms press-and-hold (cancelled by >10px movement or the browser taking over as a native pan via `pointercancel`); a quick swipe scrolls instead. Mouse/pen unaffected (still instant drag). Only applied to the roster list — already-placed battlefield cards don't scroll, so they're untouched. Verified via synthetic touch PointerEvents; real on-device touchscreen feel not verifiable in this environment, flagged to the user to confirm on their phone.
+- [ ] Next AI: if the 250ms hold delay feels off on-device (too slow/fast to grab), it's a single constant (`TOUCH_DRAG_HOLD_MS`) to tune.
+
+
 ## Recently Done (2026-08-18) — Repo connected to GitHub + full deployment/battle regression pass
 - [x] Connected this project to `github.com/ChristianHouser/War-of-Shards` (`main`, tracking `origin/main`) and pushed all existing project files. Future work just needs a normal `git push`.
 - [x] Ran a full manual regression pass on `Match_3_game.html` via a real local server (`.claude/launch.json`, `python -m http.server`) driven through the Browser tool — file:// alone only renders a static snapshot, scripts don't execute, so this is the setup needed for any future live-browser testing of this project. Board/hero-click drag interactions use custom `pointerdown/pointermove/pointerup` listeners (not native HTML5 DnD), so real click/drag testing tools need to dispatch actual `PointerEvent`s with intermediate move steps (a single down+up with no moves in between does not register as a drag) — see the game's own `startRangedDrag`/`startMeleeDrag`/`onRangedDragMove`/`onMeleeDragMove` (~line 1263 on).

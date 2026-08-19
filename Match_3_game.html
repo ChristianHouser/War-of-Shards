@@ -1037,6 +1037,46 @@ function renderDeployFilterBar() {
   });
 }
 
+// The roster list scrolls vertically, and dragging a card to place it is
+// ALSO a largely-vertical gesture — so on touch, a plain scroll swipe and
+// "grab this card" are hard to tell apart from the very first pixel of
+// movement. Mirrors the standard mobile pattern (iOS/Android reorderable
+// lists, Trello, etc.): a quick swipe just scrolls the list; a brief
+// press-and-hold (roughly stationary for TOUCH_DRAG_HOLD_MS) "grabs" the
+// card and starts the normal drag. Mouse/pen have no such conflict (there's
+// no click-drag-to-scroll gesture to protect), so they keep the previous
+// instant-drag-on-pointerdown behavior. `card.style.touchAction = 'pan-y'`
+// (set by the caller, not here) is what lets the browser scroll natively
+// during the hold-decision window — if the browser takes over the touch as
+// a native pan, it fires `pointercancel`, which this treats the same as an
+// explicit over-threshold move (abort the pending grab).
+const TOUCH_DRAG_HOLD_MS = 250;
+const TOUCH_DRAG_CANCEL_PX = 10;
+function attachRosterDragStart(el, startDragFn) {
+  el.addEventListener('pointerdown', (e) => {
+    if (gamePhase !== 'deploy') return;
+    if (e.pointerType !== 'touch') {
+      startDragFn(e); // mouse/pen: no scroll to protect, start immediately
+      return;
+    }
+    const sx = e.clientX, sy = e.clientY;
+    const timer = setTimeout(() => { cleanup(); startDragFn(e); }, TOUCH_DRAG_HOLD_MS);
+    function onMove(ev) {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > TOUCH_DRAG_CANCEL_PX) cleanup();
+    }
+    function onAbort() { cleanup(); }
+    function cleanup() {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onAbort);
+      window.removeEventListener('pointercancel', onAbort);
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onAbort);
+    window.addEventListener('pointercancel', onAbort);
+  });
+}
+
 // Both Ranged and Melee roster cards are drag-to-place: Ranged is dropped
 // onto whichever of the fixed slots the player wants; Melee is dropped
 // anywhere in the free-form Melee column, with its coverage computed live.
@@ -1068,11 +1108,11 @@ function renderDeployRoster() {
       <div class="mini-name">${cd.name}${cd.isSpecial ? ' ★' : ''}</div>
       <div class="mini-sub">${cd.type === 'ranged' ? '🏹' : '⚔️'} drag to place · ${cd.class} · ${cd.hp} HP</div>
     `;
-    card.style.touchAction = 'none';
+    card.style.touchAction = 'pan-y'; // let the list scroll natively on touch; see attachRosterDragStart
     if (cd.type === 'ranged') {
-      card.addEventListener('pointerdown', (e) => startRangedDrag(e, { charId: id, fromSlot: null }));
+      attachRosterDragStart(card, (e) => startRangedDrag(e, { charId: id, fromSlot: null }));
     } else {
-      card.addEventListener('pointerdown', (e) => startMeleeDrag(e, { charId: id, meleeIndex: null }));
+      attachRosterDragStart(card, (e) => startMeleeDrag(e, { charId: id, meleeIndex: null }));
     }
     root.appendChild(card);
   });
