@@ -1640,15 +1640,17 @@ function onMeleeDragEnd(e) {
 //                            Melee (front-line) unit.
 //   Match of 5+ (straight run, or a T/L/plus formed by two intersecting
 //   runs of >=3)          -> same 1 mana/tile, PLUS one cell becomes a
-//                            Runic Crystal. UNLIKE the bomb, a crystal
-//                            never auto-activates — its choice modal only
-//                            opens when the player directly TAPS its tile
-//                            (see onTileClick). Being incidentally caught
-//                            in a later match just clears it like an
-//                            ordinary tile (its group-share mana still
-//                            pays out, but the special effect is lost).
-//                            A tap counts as the turn's one board action,
-//                            same as a swap. On tap, the player chooses:
+//                            Runic Crystal. Activates the same two ways a
+//                            Bomb's first trigger does: caught in a fresh
+//                            same-color group, OR the player directly TAPS
+//                            its tile (see onTileClick) — either opens its
+//                            choice modal. Being touched by an unrelated
+//                            swap that doesn't connect into a match still
+//                            just clears it like an ordinary tile (its
+//                            group-share mana still pays out, no special
+//                            effect). Either trigger counts as the turn's
+//                            one board action, same as a swap. Either way
+//                            (tap or match), the player then chooses:
 //                            Option A clears every tile of that color on
 //                            the board (mana for all of them); Option B
 //                            ("Runic Wave") deals damage across all
@@ -2100,12 +2102,12 @@ function processMatches(swapHint, activationSeeds) {
   function queueExplosionIfSpecial(x, y) {
     const type = preExisting[y][x];
     if (!type) return;
-    // Runic Crystals no longer auto-activate by being incidentally caught in
-    // a fresh match — only a direct tap on the crystal (see onTileClick)
-    // opens its choice modal. Caught-in-a-match crystals just clear like any
-    // other matched tile (still paying their share of the group's mana).
-    // Arcane Bombs are unaffected — being matched still detonates them.
-    if (type !== 'bomb') return;
+    // A pre-existing Bomb or Crystal caught in a fresh same-color match
+    // (its cell joins a newly-formed >=3 connected group — i.e. the player
+    // swapped in at least two more tiles of its color, connected to it)
+    // auto-activates: a Bomb detonates, a Crystal opens its choice modal —
+    // same as a direct tap does for a Crystal (see onTileClick). This is in
+    // addition to a Bomb's own "any adjacent swap touches it" trigger.
     const k = `${x},${y}`;
     if (queuedKeys.has(k)) return;
     queuedKeys.add(k);
@@ -2183,13 +2185,14 @@ function onTileClick(x, y) {
   if (!board[y][x]) return;
 
   // Runic Crystal: a direct tap activates it immediately (opens the choice
-  // modal) instead of joining the normal select-then-swap flow — the
-  // crystal's options must not appear until the player deliberately taps it
-  // (not from being incidentally caught in a later match, and not from an
-  // unrelated swap merely touching it — see queueExplosionIfSpecial and the
-  // swap branch below). A crystal's own cell can never be used as one half
-  // of a normal two-tile swap once it exists on the board. Counts as this
-  // turn's one board action, same as a normal swap.
+  // modal) instead of joining the normal select-then-swap flow. This is one
+  // of its two triggers — the other is being caught in a fresh same-color
+  // match (see queueExplosionIfSpecial), same as an Arcane Bomb. Being
+  // merely touched by an unrelated swap that doesn't form a match through
+  // its cell still does nothing (see the swap branch below). A crystal's
+  // own cell can never be used as one half of a normal two-tile swap once
+  // it exists on the board. Counts as this turn's one board action, same
+  // as a normal swap.
   if (boardSpecial[y][x] === 'crystal') {
     if (selectedTile) {
       const prevEl = getTileEl(selectedTile.x, selectedTile.y);
