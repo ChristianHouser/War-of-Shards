@@ -281,7 +281,7 @@
       font-size: 0.72rem;
       color: #ccc;
       text-align: center;
-      margin-bottom: 6px;
+      white-space: nowrap;
     }
     #deploy-roster-list {
       display: flex;
@@ -321,10 +321,16 @@
 
     #deploy-filter-bar {
       display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .filter-chip-row {
+      display: flex;
       gap: 6px;
       justify-content: center;
       align-items: center;
-      margin-bottom: 8px;
       flex-wrap: wrap;
     }
     .filter-chip {
@@ -346,6 +352,32 @@
     .filter-chip.clear-chip {
       background: #333;
       color: #ddd;
+    }
+    /* Clear stays visually inert until a filter is actually applied — per
+       direct instruction — since clicking it with nothing active would be
+       a no-op anyway. pointer-events:none blocks the click outright rather
+       than relying on a JS guard in the handler. */
+    .filter-chip.clear-chip.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .filter-chip.colors-toggle.active {
+      background: #2a2a4a;
+      color: #ccc;
+      border-color: #ffd700;
+      font-weight: normal;
+    }
+    .filter-color-chip {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 2px solid #555;
+      cursor: pointer;
+    }
+    .filter-color-chip.active {
+      border-color: #fff;
+      box-shadow: 0 0 0 2px #ffd700;
     }
 
     /* ===== MELEE DRAG-TO-PLACE ===== */
@@ -488,20 +520,20 @@
     button:active { background: #c81e45; }
     button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
 
-    /* ===== Formation button + explainer modal (deployment/placement screen only) ===== */
+    /* ===== Placement screen controls row (Formation / Deployed count / Filter) ===== */
     /* Sits just outside the placement box, not overlapping its cards: a row
-       of its own directly underneath, right-aligned so the button still
-       reads as "bottom right" relative to the box above it. Width matches
-       #battlefield.deploy-battlefield-narrow so "right-aligned" lines up
-       with that box's actual right edge, not the wider page/body width. */
-    #formation-btn-wrap {
+       of its own directly underneath, centered as a group. Order is fixed
+       (Formation, then the count, then Filter) per direct request. */
+    #placement-controls {
       width: 100%;
       max-width: 220px;
       margin: 6px auto 0;
       display: flex;
-      justify-content: flex-end;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
-    #btn-formation {
+    #btn-formation, #btn-filter-toggle {
       background: #0f3460;
       color: #ffd700;
       border: 2px solid #ffd700;
@@ -510,8 +542,10 @@
       font-size: 0.65rem;
       font-weight: bold;
       cursor: pointer;
+      white-space: nowrap;
     }
-    #btn-formation:active { background: #1a4a80; }
+    #btn-formation:active, #btn-filter-toggle:active { background: #1a4a80; }
+    #btn-filter-toggle.open { background: #ffd700; color: #1a1a2e; }
     .formation-text { text-align: left; font-size: 0.78rem; line-height: 1.55; color: #ddd; margin-bottom: 12px; }
     .formation-text div { margin-bottom: 4px; }
     #formation-carousel {
@@ -575,13 +609,20 @@
   <div id="battlefield"></div>
 
   <!-- Formation button: sits just outside/underneath the placement box
-       (not overlapping its cards), right-aligned. Deployment-only, shown
-       by initDeployment() and hidden by startBattle() — a static element
+       (not overlapping its cards). Deployment-only, shown by
+       initDeployment() and hidden by startBattle() — static elements
        rather than something renderDeployBattlefield() rebuilds each time,
-       since (unlike the cards) it never needs to change. -->
-  <div id="formation-btn-wrap" style="display:none;">
+       since (unlike the cards) they never need to change. -->
+  <div id="placement-controls" style="display:none;">
     <button id="btn-formation">🛡 Formation</button>
+    <div id="deploy-status"></div>
+    <button id="btn-filter-toggle">▾ Filter</button>
   </div>
+
+  <!-- Collapsible filter panel, opened via the Filter toggle above. Hidden
+       by default (and reset closed on every fresh deployment entry) —
+       see renderDeployFilterBar(). -->
+  <div id="deploy-filter-bar" style="display:none;"></div>
 
   <!-- End Turn sits between the Battlefield (above) and the Match-3 board
        (below) so the player can bank remaining mana and hand the turn to
@@ -593,8 +634,6 @@
 
   <!-- ===== Deployment-only panel ===== -->
   <div id="deploy-panel">
-    <div id="deploy-status"></div>
-    <div id="deploy-filter-bar"></div>
     <div id="deploy-roster-list"></div>
     <div class="controls">
       <button id="btn-start-battle">Start Battle</button>
@@ -903,7 +942,9 @@ let gamePhase = 'deploy'; // 'deploy' | 'battle'
 
 // Deployment state
 let deployAvailable = [];   // character ids still available for the player to place
-let deployActiveFilters = new Set(); // subset of 'melee' | 'ranged' | 'hero' | 'nonhero' — chips toggle independently and can be combined; see renderDeployRoster for the AND/OR rule
+let deployActiveFilters = new Set(); // subset of 'melee' | 'ranged' | 'hero' | 'nonhero' | 'color-<color>' — chips toggle independently and can be combined; see renderDeployRoster for the AND/OR rule
+let deployFilterBarOpen = false; // whether the collapsible filter section (behind the Filter toggle button) is expanded
+let deployColorsOpen = false; // whether the "Colors" sub-section (Red/Blue/Green/Yellow/Purple) is expanded within the filter bar
 // ranged: charId|null, fixed length RANGED_SLOTS, index = slot/lane the player dropped it on.
 // melee: {charId, band}[] — band = geometric row/half-step position (see
 // comment above); order in this array has no visual meaning anymore, each
@@ -1184,6 +1225,8 @@ function initDeployment() {
   deployAvailable = CHARACTERS.map(c => c.id);
   playerPlacements = { ranged: new Array(RANGED_SLOTS).fill(null), melee: [] };
   deployActiveFilters = new Set();
+  deployFilterBarOpen = false;
+  deployColorsOpen = false;
   dragState = null;
   gamePhase = 'deploy';
   setInfoText('deploy');
@@ -1192,7 +1235,8 @@ function initDeployment() {
   document.getElementById('turn-indicator').style.display = 'none';
   document.getElementById('battle-controls').style.display = 'none';
   document.getElementById('end-turn-wrap').style.display = 'none';
-  document.getElementById('formation-btn-wrap').style.display = 'flex';
+  document.getElementById('placement-controls').style.display = 'flex';
+  document.getElementById('deploy-filter-bar').style.display = 'none';
   renderDeployFilterBar();
   renderDeployRoster();
   renderDeployBattlefield();
@@ -1211,21 +1255,40 @@ function placedCount() {
 function updateDeployStatus() {
   const statusEl = document.getElementById('deploy-status');
   const n = placedCount();
-  if (statusEl) statusEl.textContent = `${n} of ${TEAM_CAP} characters deployed`;
+  if (statusEl) statusEl.textContent = `Deployed: ${n}/${TEAM_CAP}`;
   const btn = document.getElementById('btn-start-battle');
   if (btn) btn.disabled = n === 0;
 }
 
+// Filter chips live behind the Filter toggle button (#btn-filter-toggle,
+// in #placement-controls) — collapsed by default, opened per direct
+// instruction. "Colors" is a second-level disclosure within that panel:
+// tapping it reveals a sub-row of the 5 color chips, which are the actual
+// filters (added to deployActiveFilters as 'color-<name>'); "Colors"
+// itself doesn't filter anything, it only shows/hides that sub-row.
+const COLOR_LABEL = { red: 'Red', blue: 'Blue', green: 'Green', yellow: 'Yellow', purple: 'Purple' };
 function renderDeployFilterBar() {
   const bar = document.getElementById('deploy-filter-bar');
   if (!bar) return;
   const chipHtml = (key, label) => `<div class="filter-chip ${deployActiveFilters.has(key) ? 'active' : ''}" id="filter-${key}">${label}</div>`;
+  const anyActive = deployActiveFilters.size > 0;
+  const colorRowHtml = deployColorsOpen ? `
+    <div class="filter-chip-row">
+      ${['red', 'blue', 'green', 'yellow', 'purple'].map(c => `
+        <div class="filter-color-chip ${deployActiveFilters.has(`color-${c}`) ? 'active' : ''}"
+             id="filter-color-${c}" style="background:${COLOR_HEX[c]}" title="${COLOR_LABEL[c]}"></div>
+      `).join('')}
+    </div>` : '';
   bar.innerHTML = `
-    ${chipHtml('melee', '⚔ Melee')}
-    ${chipHtml('ranged', '🏹 Ranged')}
-    ${chipHtml('hero', '★ Heroes')}
-    ${chipHtml('nonhero', '☆ Non-Heroes')}
-    <div class="filter-chip clear-chip" id="filter-clear">✕ Clear</div>
+    <div class="filter-chip-row">
+      ${chipHtml('melee', '⚔ Melee')}
+      ${chipHtml('ranged', '🏹 Ranged')}
+      ${chipHtml('hero', '★ Heroes')}
+      ${chipHtml('nonhero', '☆ Non-Heroes')}
+      <div class="filter-chip colors-toggle ${deployColorsOpen ? 'active' : ''}" id="filter-colors-toggle">🎨 Colors ${deployColorsOpen ? '▴' : '▾'}</div>
+      <div class="filter-chip clear-chip ${anyActive ? '' : 'disabled'}" id="filter-clear">✕ Clear</div>
+    </div>
+    ${colorRowHtml}
   `;
   ['melee', 'ranged', 'hero', 'nonhero'].forEach(key => {
     document.getElementById(`filter-${key}`).addEventListener('click', () => {
@@ -1235,12 +1298,37 @@ function renderDeployFilterBar() {
       renderDeployRoster();
     });
   });
+  document.getElementById('filter-colors-toggle').addEventListener('click', () => {
+    deployColorsOpen = !deployColorsOpen;
+    renderDeployFilterBar();
+  });
+  if (deployColorsOpen) {
+    ['red', 'blue', 'green', 'yellow', 'purple'].forEach(c => {
+      const key = `color-${c}`;
+      document.getElementById(`filter-${key}`).addEventListener('click', () => {
+        if (deployActiveFilters.has(key)) deployActiveFilters.delete(key);
+        else deployActiveFilters.add(key);
+        renderDeployFilterBar();
+        renderDeployRoster();
+      });
+    });
+  }
   document.getElementById('filter-clear').addEventListener('click', () => {
     deployActiveFilters.clear();
     renderDeployFilterBar();
     renderDeployRoster();
   });
 }
+
+function toggleDeployFilterBar() {
+  deployFilterBarOpen = !deployFilterBarOpen;
+  const bar = document.getElementById('deploy-filter-bar');
+  const btn = document.getElementById('btn-filter-toggle');
+  bar.style.display = deployFilterBarOpen ? 'flex' : 'none';
+  btn.textContent = deployFilterBarOpen ? '▴ Filter' : '▾ Filter';
+  btn.classList.toggle('open', deployFilterBarOpen);
+}
+document.getElementById('btn-filter-toggle').onclick = toggleDeployFilterBar;
 
 // Drag (for both initial placement and repositioning an already-placed
 // card) is mouse-only — kept around for quick precise/desktop testing (e.g.
@@ -1301,22 +1389,25 @@ function buildCardActionBtn(symbol, kind, onAction) {
 // onto whichever of the fixed slots the player wants; Melee is dropped
 // anywhere in the free-form Melee column, with its coverage computed live.
 // deployActiveFilters holds any combination of 'melee'/'ranged' (combat
-// type) and 'hero'/'nonhero' (isSpecial). Chips are no longer mutually
-// exclusive: multiple can be active at once. Within a group (type, or
-// hero/non-hero) active filters are OR'd — e.g. Melee+Ranged both on shows
-// everyone, same as neither. Across the two groups it's AND'd — e.g.
-// Heroes+Ranged narrows the list to Ranged Heroes only. An empty group
-// (no chips from it active) doesn't filter on that dimension at all.
+// type), 'hero'/'nonhero' (isSpecial), and 'color-<name>' (cd.color).
+// Chips are not mutually exclusive: multiple can be active at once. Within
+// a group (type, hero/non-hero, or color) active filters are OR'd — e.g.
+// Melee+Ranged both on shows everyone, same as neither; Red+Blue shows
+// either color. Across the three groups it's AND'd — e.g. Heroes+Ranged
+// narrows the list to Ranged Heroes only. An empty group (no chips from it
+// active) doesn't filter on that dimension at all.
 function renderDeployRoster() {
   const root = document.getElementById('deploy-roster-list');
   root.innerHTML = '';
   const typeFilters = ['melee', 'ranged'].filter(k => deployActiveFilters.has(k));
   const heroFilters = ['hero', 'nonhero'].filter(k => deployActiveFilters.has(k));
+  const colorFilters = COLORS.filter(c => deployActiveFilters.has(`color-${c}`));
   const visible = deployAvailable.filter(id => {
     const cd = charById(id);
     const typeOk = typeFilters.length === 0 || typeFilters.includes(cd.type);
     const heroOk = heroFilters.length === 0 || heroFilters.some(f => f === 'hero' ? cd.isSpecial : !cd.isSpecial);
-    return typeOk && heroOk;
+    const colorOk = colorFilters.length === 0 || colorFilters.includes(cd.color);
+    return typeOk && heroOk && colorOk;
   });
   visible.forEach(id => {
     const cd = charById(id);
@@ -2877,7 +2968,8 @@ function startBattle() {
   document.getElementById('turn-indicator').style.display = 'block';
   document.getElementById('battle-controls').style.display = 'flex';
   document.getElementById('end-turn-wrap').style.display = 'block';
-  document.getElementById('formation-btn-wrap').style.display = 'none';
+  document.getElementById('placement-controls').style.display = 'none';
+  document.getElementById('deploy-filter-bar').style.display = 'none';
 
   buildArmies();
   selectedTile = null;
