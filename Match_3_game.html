@@ -518,6 +518,47 @@
     button:active { background: #c81e45; }
     button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
 
+    /* ===== Battle screen controls row (Auto Attack far left, End Turn centered) ===== */
+    /* Absolute positioning, not flex/grid: End Turn must stay pixel-centered
+       on the row regardless of Auto Attack's own width — and that width
+       genuinely changes (its label toggles between "OFF"/"ON", different
+       lengths), which would throw off any flex/grid trick that balances
+       the two based on a snapshot of Auto Attack's current size. Anchoring
+       End Turn to the row's own 50% is independent of that entirely. */
+    #battle-controls-row {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      margin: 0 auto;
+      min-height: 34px;
+    }
+    #btn-auto-attack {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      background: #16537e;
+      color: #9be3ff;
+      border: 2px solid #4facfe;
+      border-radius: 14px;
+      padding: 6px 10px;
+      font-size: 0.65rem;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+    #btn-auto-attack.on {
+      background: #4facfe;
+      color: #0a1a2a;
+    }
+    #btn-end-turn {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      background: #27ae60;
+      white-space: nowrap;
+    }
+
     /* ===== Placement screen controls (Formation / Deployed count / Codex, then Filter below) ===== */
     /* Sits just outside the placement box, not overlapping its cards: two
        rows of their own directly underneath, each centered as a group.
@@ -643,9 +684,14 @@
   <!-- End Turn sits between the Battlefield (above) and the Match-3 board
        (below) so the player can bank remaining mana and hand the turn to
        the enemy without opening every hero's action popup to pick "Do
-       Nothing" one at a time. -->
-  <div id="end-turn-wrap" style="display:none; margin:6px 0; text-align:center;">
-    <button id="btn-end-turn" style="width:100%; max-width:420px; background:#27ae60;">End Turn (bank remaining mana)</button>
+       Nothing" one at a time. Auto Attack sits far left of it in the same
+       row — both are absolutely positioned (see CSS) so End Turn stays
+       genuinely centered on the row regardless of Auto Attack's own width. -->
+  <div id="end-turn-wrap" style="display:none; width:100%; max-width:420px; margin:6px auto 0;">
+    <div id="battle-controls-row">
+      <button id="btn-auto-attack" title="Auto-resolve attacks each turn: random valid targets, Heroes sometimes bank mana for their Special instead of attacking">▶ Auto: OFF</button>
+      <button id="btn-end-turn" title="Bank remaining mana and end your turn">End Turn</button>
+    </div>
   </div>
 
   <!-- ===== Deployment-only panel ===== -->
@@ -2733,6 +2779,21 @@ document.getElementById('btn-end-turn').onclick = () => {
   endPlayerTurn();
 };
 
+// Toggles Auto Attack on/off. Doesn't reset when a new battle starts —
+// treated as a standing player preference ("how do I want to play"),
+// same as e.g. a settings checkbox, not per-battle state. Turning it on
+// immediately checks whether there's already something to resolve this
+// turn (e.g. flipped mid-turn after a swap), rather than waiting for the
+// next action to happen to notice.
+document.getElementById('btn-auto-attack').onclick = () => {
+  autoAttackEnabled = !autoAttackEnabled;
+  const btn = document.getElementById('btn-auto-attack');
+  btn.textContent = autoAttackEnabled ? '▶ Auto: ON' : '▶ Auto: OFF';
+  btn.classList.toggle('on', autoAttackEnabled);
+  if (autoAttackEnabled) checkAutoEndPlayerTurn();
+  else cancelAutoAttack();
+};
+
 // Which ranged lanes are currently protected by a living melee hero on the
 // given side (each melee hero carries its own `coverage`, assigned at
 // deployment — either aligned to one lane, a boundary between two, or null).
@@ -2900,6 +2961,71 @@ function performAttack(attacker, target, attackType) {
   checkAutoEndPlayerTurn();
 }
 
+// ---------- AUTO ATTACK (optional, battlefield-only — the Match-3 board
+// always stays fully manual) ----------
+// When enabled, each living player hero that can afford its Basic Attack
+// auto-resolves against a random valid target — same target-picking rule
+// the enemy AI already uses (getValidTargets), just semi-logical rather
+// than tactical. A Hero (isSpecial) that can already afford its Special
+// always uses it (no reason to hold back a bigger attack it can already
+// use); one that can only afford Basic gets a random chance to bank mana
+// instead — "saving for a greater attack" — same as manually picking Do
+// Nothing. Normal characters have no such option and always attack, same
+// rule as manual play. Paced one hero at a time via scheduleAutoAttack's
+// delay so the player can actually follow what's happening, rather than
+// every hero resolving in the same instant.
+let autoAttackEnabled = false;
+let autoAttackTimeoutHandle = null;
+const AUTO_ATTACK_DELAY_MS = 500;
+const AUTO_ATTACK_BANK_CHANCE = 0.4; // odds a Hero holds a Basic-affordable turn to save toward Special
+
+function scheduleAutoAttack() {
+  if (autoAttackTimeoutHandle) return; // a hop is already queued
+  autoAttackTimeoutHandle = setTimeout(() => {
+    autoAttackTimeoutHandle = null;
+    runNextAutoAttack();
+  }, AUTO_ATTACK_DELAY_MS);
+}
+
+function cancelAutoAttack() {
+  if (autoAttackTimeoutHandle) {
+    clearTimeout(autoAttackTimeoutHandle);
+    autoAttackTimeoutHandle = null;
+  }
+}
+
+// Resolves exactly ONE hero's action, then relies on performAttack (or, for
+// the no-action branches below, a direct call) to re-invoke
+// checkAutoEndPlayerTurn() — which schedules the next hop via
+// scheduleAutoAttack() if more heroes remain, or ends the turn once
+// everyone's resolved. This mirrors how the manual per-hero flow already
+// chains through checkAutoEndPlayerTurn() after every action.
+function runNextAutoAttack() {
+  if (!autoAttackEnabled || gamePhase !== 'battle' || currentTurn !== 'player' || isAnimating) return;
+  const hero = heroes.find(h => h.side === 'player' && !h.dead && !h.actedThisTurn && h.mana >= basicCostFor(h));
+  if (!hero) return; // nothing eligible right now; checkAutoEndPlayerTurn's own allResolved check handles ending the turn
+
+  const targets = getValidTargets(hero);
+  if (targets.length === 0) {
+    hero.actedThisTurn = true;
+    updateHeroUI(hero);
+    checkAutoEndPlayerTurn();
+    return;
+  }
+  const target = targets[Math.floor(Math.random() * targets.length)];
+
+  if (hero.isSpecial && hero.mana < SPECIAL_COST && Math.random() < AUTO_ATTACK_BANK_CHANCE) {
+    hero.actedThisTurn = true;
+    log(`${hero.name} (Auto) saves mana for a bigger attack.`);
+    updateHeroUI(hero);
+    checkAutoEndPlayerTurn();
+    return;
+  }
+
+  const useSpecial = hero.isSpecial && hero.mana >= SPECIAL_COST;
+  performAttack(hero, target, useSpecial ? 'special' : 'basic');
+}
+
 // Once every living player hero is resolved for this turn, automatically
 // hand the turn to the enemy. Player is always the attacker on the left
 // side; enemy only ever acts after the player is done.
@@ -2920,7 +3046,9 @@ function checkAutoEndPlayerTurn() {
   if (allResolved) {
     log('All your heroes have acted — enemy turn begins.');
     endPlayerTurn();
+    return;
   }
+  if (autoAttackEnabled) scheduleAutoAttack();
 }
 
 function updateTurnUI() {
@@ -2945,6 +3073,7 @@ function endPlayerTurn() {
   if (currentTurn !== 'player' || isAnimating) return;
   selectedHero = null;
   endTileDrag();
+  cancelAutoAttack();
   heroes.forEach(updateHeroUI);
   currentTurn = 'enemy';
   setBoardLocked(true);
@@ -3028,6 +3157,7 @@ function startBattle() {
 
   buildArmies();
   endTileDrag();
+  cancelAutoAttack();
   selectedHero = null;
   selectedAttackType = 'basic';
   pendingActionHero = null;
@@ -3050,6 +3180,7 @@ function restartBattle() {
   if (heroes.length === 0) { startBattle(); return; }
   heroes.forEach(h => { h.hp = h.maxHp; h.mana = 0; h.dead = false; h.actedThisTurn = false; });
   endTileDrag();
+  cancelAutoAttack();
   selectedHero = null;
   selectedAttackType = 'basic';
   pendingActionHero = null;
