@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Character Codex</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px;
+    padding-bottom: 40px;
+  }
+  h1 { font-size: 1.3rem; color: #ffd700; margin-bottom: 4px; text-align: center; }
+  .subtitle { font-size: 0.75rem; color: #aaa; text-align: center; margin-bottom: 10px; max-width: 520px; }
+
+  .topbar {
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  .nav-btn {
+    background: #0f3460;
+    color: #ffd700;
+    border: 2px solid #ffd700;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 0.9rem;
+    font-weight: bold;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  .nav-btn:active { transform: scale(0.97); }
+
+  .rules-box {
+    width: 100%;
+    max-width: 640px;
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.7rem;
+    color: #ccc;
+    margin-bottom: 14px;
+    line-height: 1.5;
+  }
+  .rules-box b { color: #ffd700; }
+
+  .controls {
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+    align-items: center;
+  }
+  .controls input[type="text"] {
+    flex: 1 1 140px;
+    background: #111;
+    border: 1px solid #444;
+    color: #eee;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.8rem;
+  }
+  .chip {
+    background: #2a2a4a;
+    border: 1px solid #555;
+    color: #ccc;
+    border-radius: 14px;
+    padding: 5px 11px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .chip.active {
+    background: #ffd700;
+    color: #1a1a2e;
+    border-color: #ffd700;
+    font-weight: bold;
+  }
+
+  #count {
+    width: 100%;
+    max-width: 640px;
+    font-size: 0.7rem;
+    color: #888;
+    margin-bottom: 8px;
+  }
+
+  .class-group {
+    width: 100%;
+    max-width: 640px;
+    margin-bottom: 6px;
+  }
+  .class-heading {
+    font-size: 0.85rem;
+    color: #ffd700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #333;
+    padding: 10px 2px 4px;
+    margin-top: 6px;
+  }
+
+  .roster-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .char-card {
+    background: #22223a;
+    border: 2px solid #444;
+    border-radius: 10px;
+    padding: 10px 12px;
+    position: relative;
+    overflow: hidden;
+  }
+  .char-card.special { border-color: #c0c0c0; box-shadow: 0 0 8px #c0c0c044; }
+  .char-card[data-color="red"]    { background: linear-gradient(160deg, #3a1e1e, #22223a 60%); }
+  .char-card[data-color="green"]  { background: linear-gradient(160deg, #1a331a, #22223a 60%); }
+  .char-card[data-color="blue"]   { background: linear-gradient(160deg, #1a2740, #22223a 60%); }
+  .char-card[data-color="yellow"] { background: linear-gradient(160deg, #3a3010, #22223a 60%); }
+  .char-card[data-color="purple"] { background: linear-gradient(160deg, #331a3a, #22223a 60%); }
+
+  .char-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .char-name-block { display: flex; flex-direction: column; }
+  .char-name { font-size: 0.95rem; font-weight: bold; color: #fff; }
+  .char-title { font-size: 0.7rem; color: #bbb; font-style: italic; }
+  .char-class { font-size: 0.65rem; color: #ffd700; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+  .color-dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 1px solid #000;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.68rem;
+    color: #ddd;
+    margin: 6px 0;
+  }
+  .stat-pill {
+    background: #111a2e;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+  .stat-pill.type-melee { color: #ff8a8a; }
+  .stat-pill.type-ranged { color: #8ac4ff; }
+
+  .ability-block {
+    background: #0d0d1a;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-top: 6px;
+    font-size: 0.68rem;
+    line-height: 1.4;
+  }
+  .ability-block.basic { color: #9fd; }
+  .ability-line-title {
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2px;
+  }
+  .ability-line-title span.name { color: #fff; }
+  .cost-tag {
+    font-size: 0.6rem;
+    color: #ffd700;
+    font-weight: normal;
+  }
+  .impl-tag {
+    font-size: 0.58rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 6px;
+  }
+  .impl-tag.on { background: #1f5c2e; color: #8fe0a0; }
+  .impl-tag.off { background: #4a3a1a; color: #e0c98f; }
+
+  .star { color: #ffd700; margin-left: 4px; }
+
+  .legend {
+    width: 100%;
+    max-width: 640px;
+    font-size: 0.62rem;
+    color: #888;
+    margin-top: 16px;
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  #empty-msg {
+    color: #888;
+    font-size: 0.8rem;
+    padding: 20px;
+    text-align: center;
+    width: 100%;
+  }
+</style>
+</head>
+<body>
+
+  <h1>⚔ Character Codex</h1>
+  <div class="subtitle">All 45 heroes available for battle. Tap Basic/Special to see cost, damage, and ability details. Head to the battlefield to deploy your team.</div>
+
+  <div class="topbar">
+    <a class="nav-btn" href="Match_3_game.html">Go to Battlefield →</a>
+  </div>
+
+  <div class="rules-box">
+    <b>Shared rules:</b> Basic Attack usually costs 3 mana for 1 damage (a few heavier-weapon characters cost more — shown per-character below). Only ★ Special characters have a Special Attack: 5 mana for 2 damage, or a unique effect described below. A hero's max mana equals the cost of the strongest attack they have. Melee usually must clear the enemy's front line before it can reach Ranged units (some specials bypass this — noted in their ability text).
+  </div>
+
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search name or ability...">
+  </div>
+  <div class="controls" id="type-filters"></div>
+  <div class="controls" id="color-filters"></div>
+
+  <div id="count"></div>
+  <div id="roster-root"></div>
+  <div id="empty-msg" style="display:none;">No characters match your filters.</div>
+
+  <div class="legend">
+    ★ = Special character (has a unique ability) &nbsp;|&nbsp; ⚙ Implemented = this ability already works in battle &nbsp;|&nbsp; 📜 Described = ability text only, not yet mechanically wired up
+  </div>
+
+<script src="characters.js"></script>
+<script>
+  const COLOR_HEX = { red: '#e74c3c', green: '#2ecc71', blue: '#3498db', yellow: '#f1c40f', purple: '#9b59b6' };
+
+  const state = {
+    search: '',
+    type: 'all',      // 'all' | 'melee' | 'ranged'
+    color: 'all'       // 'all' | one of COLORS
+  };
+
+  const CLASS_ORDER = [];
+  CHARACTERS.forEach(c => { if (!CLASS_ORDER.includes(c.class)) CLASS_ORDER.push(c.class); });
+
+  function buildFilterBar() {
+    const typeBar = document.getElementById('type-filters');
+    const types = [['all', 'All Types'], ['melee', 'Melee'], ['ranged', 'Ranged']];
+    typeBar.innerHTML = types.map(([val, label]) =>
+      `<div class="chip ${state.type === val ? 'active' : ''}" data-type="${val}">${label}</div>`
+    ).join('');
+    typeBar.querySelectorAll('.chip').forEach(el => {
+      el.addEventListener('click', () => { state.type = el.dataset.type; render(); });
+    });
+
+    const colorBar = document.getElementById('color-filters');
+    const colors = [['all', 'All Colors'], ['red', 'Red'], ['green', 'Green'], ['blue', 'Blue'], ['yellow', 'Yellow'], ['purple', 'Purple']];
+    colorBar.innerHTML = colors.map(([val, label]) =>
+      `<div class="chip ${state.color === val ? 'active' : ''}" data-color="${val}">${label}</div>`
+    ).join('');
+    colorBar.querySelectorAll('.chip').forEach(el => {
+      el.addEventListener('click', () => { state.color = el.dataset.color; render(); });
+    });
+  }
+
+  function charMatches(c) {
+    if (state.type !== 'all' && c.type !== state.type) return false;
+    if (state.color !== 'all' && c.color !== state.color) return false;
+    if (state.search) {
+      const q = state.search.toLowerCase();
+      const hay = [c.name, c.title, c.class, c.abilityName, c.abilityText].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }
+
+  function renderCard(c) {
+    const dotColor = COLOR_HEX[c.color] || c.color;
+    const typeIcon = c.type === 'melee' ? '⚔' : '🏹';
+    const implOn = !!c.simpleAbility;
+
+    let specialBlock = '';
+    if (c.isSpecial) {
+      specialBlock = `
+        <div class="ability-block">
+          <div class="ability-line-title">
+            <span class="name">${escapeHtml(c.abilityName || 'Special')} <span class="cost-tag">(5 mana)</span></span>
+            <span class="impl-tag ${implOn ? 'on' : 'off'}">${implOn ? '⚙ Implemented' : '📜 Described'}</span>
+          </div>
+          <div>${escapeHtml(c.abilityText || 'Deals 2 damage.')}</div>
+        </div>`;
+    }
+
+    return `
+      <div class="char-card ${c.isSpecial ? 'special' : ''}" data-color="${c.color}">
+        <div class="char-head">
+          <div class="char-name-block">
+            <div class="char-name">${escapeHtml(c.name)}${c.isSpecial ? '<span class="star">★</span>' : ''}</div>
+            ${c.title ? `<div class="char-title">${escapeHtml(c.title)}</div>` : ''}
+            <div class="char-class">${escapeHtml(c.class)}</div>
+          </div>
+          <div class="color-dot" style="background:${dotColor}" title="${c.color}"></div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-pill type-${c.type}">${typeIcon} ${c.type}</span>
+          <span class="stat-pill">❤ HP ${c.hp}</span>
+          <span class="stat-pill">${escapeHtml(c.damageType)}</span>
+          <span class="stat-pill">${escapeHtml(c.weapon)}</span>
+        </div>
+        <div class="ability-block basic">
+          <div class="ability-line-title"><span class="name">Basic Attack <span class="cost-tag">(${basicCostFor(c)} mana)</span></span></div>
+          <div>Deal ${basicDmgFor(c)} damage.</div>
+        </div>
+        ${specialBlock}
+      </div>`;
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  function render() {
+    const root = document.getElementById('roster-root');
+    const countEl = document.getElementById('count');
+    const emptyEl = document.getElementById('empty-msg');
+    root.innerHTML = '';
+
+    let shown = 0;
+    CLASS_ORDER.forEach(cls => {
+      const members = CHARACTERS.filter(c => c.class === cls && charMatches(c));
+      if (members.length === 0) return;
+      shown += members.length;
+      const group = document.createElement('div');
+      group.className = 'class-group';
+      group.innerHTML = `<div class="class-heading">${escapeHtml(cls)} (${members.length})</div>
+        <div class="roster-grid">${members.map(renderCard).join('')}</div>`;
+      root.appendChild(group);
+    });
+
+    countEl.textContent = `Showing ${shown} of ${CHARACTERS.length} characters`;
+    emptyEl.style.display = shown === 0 ? 'block' : 'none';
+  }
+
+  document.getElementById('search').addEventListener('input', (e) => {
+    state.search = e.target.value.trim();
+    render();
+  });
+
+  buildFilterBar();
+  render();
+</script>
+</body>
+</html>

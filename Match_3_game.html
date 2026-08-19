@@ -1,0 +1,2515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Match-3 Battlefield Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px;
+      padding-bottom: 40px;
+      overflow-x: hidden;
+    }
+    h1 { font-size: 1.1rem; margin-bottom: 6px; color: #ffd700; }
+    .topbar { width: 100%; max-width: 420px; display: flex; justify-content: center; margin-bottom: 8px; }
+    .nav-btn {
+      background: #0f3460;
+      color: #ffd700;
+      border: 2px solid #ffd700;
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .info {
+      font-size: 0.72rem;
+      color: #aaa;
+      margin-bottom: 8px;
+      text-align: center;
+      max-width: 420px;
+    }
+    #log {
+      width: 100%;
+      max-width: 420px;
+      height: 42px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.7rem;
+      overflow-y: auto;
+      margin-bottom: 8px;
+      color: #8f8;
+    }
+
+    /* ===== BATTLEFIELD (shared by deployment + battle) ===== */
+    /* Ranged always shows TEAM_CAP fixed slots (filled or empty); Melee is a
+       free-form dynamic-length column. They are independent columns of
+       standard-size cards — they no longer need to be pixel-aligned to each
+       other, since lane/coverage is tracked in data, not visual row-matching. */
+    #battlefield {
+      display: flex;
+      justify-content: space-between;
+      /* stretch (not flex-start): all 4 columns match the tallest column's
+         height. This matters functionally, not just visually — the Melee
+         drop zone IS the .bf-column element, and with flex-start it was only
+         ever as tall as its own current content (one card, or the empty
+         placeholder). With 0-1 Melee placed that gave a tiny droppable area:
+         dropping anywhere below it registered as "outside the zone" and got
+         cancelled, which is why it looked like there was only one spot to
+         place a Melee card. Stretching ties every column's droppable/visible
+         height to the Ranged column's fixed 5-slot height instead. */
+      align-items: stretch;
+      gap: 4px;
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 10px;
+      background: #16213e;
+      padding: 8px;
+      border-radius: 10px;
+      border: 2px solid #0f3460;
+    }
+    .bf-column {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .bf-column.center-content {
+      justify-content: center;
+    }
+    .bf-column-label {
+      font-size: 0.65rem;
+      text-align: center;
+      font-weight: bold;
+      padding-bottom: 2px;
+      white-space: nowrap;
+    }
+    .card {
+      /* Standard card size — same for Ranged and Melee. A placeholder for a
+         future 2D character sprite; keep this a simple, swappable unit.
+         Height is 78px (not a round 66px) because a live Melee card's full
+         stack of content — icon, name, HP, mana bar, AND a coverage tag —
+         measures ~74px naturally; at the old 66px, flexbox's default
+         min-height:0-on-overflow:hidden-children behavior crushed .card-name
+         down to ~2px (invisible) to make everything else fit, since
+         .mana-bar-bg is the only child protected with flex-shrink:0. 78px
+         gives every child room to render at its natural size with a small
+         buffer, on both Ranged (no coverage tag, previously fine) and
+         Melee (previously broken) cards alike. */
+      width: 100%;
+      height: 78px;
+      border-radius: 8px;
+      background: #2a2a4a;
+      border: 2px solid #555;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 2px;
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.1s, box-shadow 0.15s;
+      user-select: none;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .card:active { transform: scale(0.95); }
+    .card.selected {
+      box-shadow: 0 0 0 3px #00ffaa, 0 0 12px #00ffaa88;
+      transform: scale(1.05);
+      z-index: 5;
+    }
+    .card.dead {
+      opacity: 0.25;
+      filter: grayscale(1);
+      pointer-events: none;
+    }
+    .card.acted {
+      opacity: 0.5;
+      filter: grayscale(0.7);
+    }
+    .card.special {
+      border-color: #c0c0c0;
+      box-shadow: 0 0 6px #c0c0c088;
+    }
+    .card.special.selected {
+      box-shadow: 0 0 0 3px #00ffaa, 0 0 14px #c0c0c0;
+    }
+    .card.empty-slot {
+      background: #1a1a2e;
+      border: 2px dashed #444;
+      cursor: pointer;
+    }
+    .card.empty-slot.not-clickable { cursor: default; }
+    /* An unfilled Ranged slot during live battle: it still occupies its row
+       (so filled slots below it don't shift, and Ranged rects stay accurate
+       for Melee band-positioning) but shouldn't visibly read as a droppable
+       "empty slot" anymore — nothing is draggable once battle has started.
+       visibility:hidden (not display:none) is what preserves the layout
+       footprint while hiding the box itself. */
+    .card.battle-empty-slot {
+      visibility: hidden;
+    }
+    .card-icon { font-size: 1.05rem; line-height: 1; margin-top: 1px; flex-shrink: 0; }
+    .card-name {
+      /* flex-shrink:0 matters here specifically: this element also has
+         overflow:hidden (for the ellipsis), and a flex child with overflow
+         other than visible gets its automatic min-height reset to 0 — so
+         without an explicit flex-shrink:0, THIS is the element the flexbox
+         algorithm reaches for first when a card's content is taller than
+         its box, shrinking the name toward invisible before touching
+         anything else. See the .card height comment for the full story. */
+      font-size: 0.55rem;
+      line-height: 1.15;
+      color: #eee;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .card-color-dot {
+      position: absolute;
+      top: 3px; right: 3px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 1px solid #000;
+    }
+    .mana-bar-bg {
+      width: 92%;
+      height: 12px;
+      background: #0a0a12;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 1px;
+      border: 1px solid #555;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .mana-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #00e5ff, #00a0ff);
+      transition: width 0.35s ease-out;
+      box-shadow: 0 0 8px #00e5ff;
+    }
+    .mana-num {
+      position: absolute;
+      left: 0; right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.58rem;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 1px 2px #000, 0 0 4px #000;
+      pointer-events: none;
+      text-align: center;
+    }
+    .card.gained {
+      animation: manaFlash 0.6s ease;
+    }
+    @keyframes manaFlash {
+      0% { box-shadow: 0 0 0 0 #00ffaa; }
+      40% { box-shadow: 0 0 20px 6px #00ffaa; transform: scale(1.08); }
+      100% { box-shadow: none; transform: scale(1); }
+    }
+    .hp-text {
+      font-size: 0.62rem;
+      line-height: 1;
+      color: #f88;
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+    .card.player .mana-bar { background: linear-gradient(90deg, #00c6ff, #0072ff); }
+    .card.enemy .mana-bar { background: linear-gradient(90deg, #f5576c, #f093fb); }
+
+    /* Color accents on cards */
+    .card[data-color="red"]    { background: linear-gradient(160deg, #4a2020, #2a2a4a); }
+    .card[data-color="green"]  { background: linear-gradient(160deg, #1a3a1a, #2a2a4a); }
+    .card[data-color="blue"]   { background: linear-gradient(160deg, #1a2a4a, #2a2a4a); }
+    .card[data-color="yellow"] { background: linear-gradient(160deg, #4a3a10, #2a2a4a); }
+    .card[data-color="purple"] { background: linear-gradient(160deg, #3a1a4a, #2a2a4a); }
+
+    /* ===== DEPLOYMENT PANEL ===== */
+    #deploy-panel { width: 100%; max-width: 420px; }
+    #deploy-status {
+      font-size: 0.72rem;
+      color: #ccc;
+      text-align: center;
+      margin-bottom: 6px;
+    }
+    #deploy-roster-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 6px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      justify-content: center;
+    }
+    .roster-mini-card {
+      width: 92px;
+      background: #22223a;
+      border: 2px solid #444;
+      border-radius: 8px;
+      padding: 6px 4px;
+      text-align: center;
+      cursor: pointer;
+    }
+    .roster-mini-card.selected {
+      border-color: #00ffaa;
+      box-shadow: 0 0 8px #00ffaa88;
+    }
+    .roster-mini-card[data-color="red"]    { background: linear-gradient(160deg, #3a1e1e, #22223a 70%); }
+    .roster-mini-card[data-color="green"]  { background: linear-gradient(160deg, #1a331a, #22223a 70%); }
+    .roster-mini-card[data-color="blue"]   { background: linear-gradient(160deg, #1a2740, #22223a 70%); }
+    .roster-mini-card[data-color="yellow"] { background: linear-gradient(160deg, #3a3010, #22223a 70%); }
+    .roster-mini-card[data-color="purple"] { background: linear-gradient(160deg, #331a3a, #22223a 70%); }
+    .mini-color-dot { width: 10px; height: 10px; border-radius: 50%; margin: 0 auto 3px; border: 1px solid #000; }
+    .mini-name { font-size: 0.58rem; font-weight: bold; color: #fff; line-height: 1.15; margin-bottom: 2px; }
+    .mini-sub { font-size: 0.5rem; color: #aaa; }
+
+    #deploy-filter-bar {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .filter-chip {
+      background: #2a2a4a;
+      border: 1px solid #555;
+      color: #ccc;
+      border-radius: 14px;
+      padding: 5px 12px;
+      font-size: 0.7rem;
+      cursor: pointer;
+      user-select: none;
+    }
+    .filter-chip.active {
+      background: #ffd700;
+      color: #1a1a2e;
+      border-color: #ffd700;
+      font-weight: bold;
+    }
+    .filter-chip.clear-chip {
+      background: #333;
+      color: #ddd;
+    }
+
+    /* ===== MELEE DRAG-TO-PLACE ===== */
+    .drag-ghost {
+      position: fixed;
+      z-index: 200;
+      pointer-events: none;
+      width: 90px;
+      padding: 6px;
+      background: #22223a;
+      border: 2px solid #00ffaa;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 0.6rem;
+      font-weight: bold;
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+      opacity: 0.95;
+    }
+    .card.guard-preview {
+      box-shadow: 0 0 0 3px #00ffaa, 0 0 14px #00ffaa;
+    }
+    .card.drop-target-hover {
+      box-shadow: 0 0 0 3px #ffd700, 0 0 14px #ffd70088;
+      border-color: #ffd700;
+    }
+    .coverage-tag {
+      font-size: 0.46rem;
+      color: #9be;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    /* The dashed "placement lining" is a deployment-only affordance — it
+       tells the player "this whole column is a droppable target". It's
+       intentionally NOT used during live battle (see renderBattlefield),
+       since nothing is draggable there anymore and leaving it up read as
+       a leftover UI cue rather than useful information. */
+    .bf-column.dropzone-hint {
+      outline: 2px dashed #555;
+      outline-offset: 2px;
+      border-radius: 6px;
+    }
+    /* With #battlefield's columns now stretched to equal height, make the
+       Melee dropzone's "drag here" placeholder fill that whole height (not
+       just one 78px card) so the entire droppable area visually reads as
+       such, instead of a small box sitting above a mysterious empty gap. */
+    .bf-column.dropzone-hint .card.empty-slot {
+      flex: 1 1 auto;
+      height: auto;
+      min-height: 78px;
+    }
+    /* Containing block for the absolutely-positioned, row-snapped Melee
+       cards — needed in both deployment (alongside .dropzone-hint above)
+       and live battle (on its own, once the dashed hint is gone). */
+    .bf-column.melee-positioned {
+      position: relative;
+    }
+    /* A simple, permanent divider between the player's two columns and the
+       enemy's two columns — present in both deployment and battle. Dotted
+       (not the dashed style used above) so it doesn't read as another
+       drop-target hint, just a plain "your side / their side" separator. */
+    .bf-column.side-divider {
+      border-left: 2px dotted #778;
+      padding-left: 6px;
+    }
+
+    /* ===== MATCH-3 BOARD ===== */
+    #board-wrap {
+      width: 100%;
+      max-width: 420px;
+      background: #0f3460;
+      border-radius: 10px;
+      padding: 8px;
+      border: 2px solid #e94560;
+      transition: opacity 0.25s;
+    }
+    #board-wrap.locked {
+      opacity: 0.5;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      grid-template-rows: repeat(5, 48px);
+      gap: 3px;
+    }
+    .tile {
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.15s, opacity 0.25s, background 0.2s;
+      border: 2px solid transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: bold;
+      color: rgba(0,0,0,0.35);
+      user-select: none;
+    }
+    .tile.empty {
+      background: #1a1a2e;
+      border: 1px dashed #333;
+      cursor: default;
+      opacity: 0.4;
+    }
+    .tile.selected {
+      border-color: #fff;
+      transform: scale(1.08);
+      z-index: 2;
+      box-shadow: 0 0 10px #fff8;
+    }
+    .tile.red    { background: #e74c3c; }
+    .tile.green  { background: #2ecc71; }
+    .tile.blue   { background: #3498db; }
+    .tile.yellow { background: #f1c40f; }
+    .tile.purple { background: #9b59b6; }
+    .tile.matching {
+      transform: scale(0.85);
+      opacity: 0.5;
+      box-shadow: 0 0 12px #fff;
+    }
+    .tile.special-bomb {
+      box-shadow: 0 0 0 2px #ff8c00, inset 0 0 10px rgba(0,0,0,0.5);
+      font-size: 1rem;
+    }
+    .tile.special-crystal {
+      box-shadow: 0 0 0 2px #e0d0ff, inset 0 0 10px rgba(255,255,255,0.4);
+      font-size: 1rem;
+    }
+
+    .controls {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    button {
+      background: #e94560;
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    button:active { background: #c81e45; }
+    button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
+  </style>
+</head>
+<body>
+  <h1>Match-3 × Battlefield Test</h1>
+  <div class="topbar"><a class="nav-btn" href="Roster.html">☰ Character Codex</a></div>
+
+  <div class="info" id="info-text"></div>
+  <div id="log">Ready. Build your team below.</div>
+
+  <div id="battlefield"></div>
+
+  <!-- ===== Deployment-only panel ===== -->
+  <div id="deploy-panel">
+    <div id="deploy-status"></div>
+    <div id="deploy-filter-bar"></div>
+    <div id="deploy-roster-list"></div>
+    <div class="controls">
+      <button id="btn-start-battle">Start Battle</button>
+    </div>
+  </div>
+
+  <!-- ===== Battle-only elements ===== -->
+  <div id="board-wrap" style="display:none;">
+    <div id="board"></div>
+  </div>
+
+  <div id="turn-indicator" style="display:none; margin:6px 0; font-weight:bold; color:#0ff; font-size:0.9rem;">Your Turn</div>
+  <div class="controls" id="battle-controls" style="display:none;">
+    <button id="btn-restart-battle">Restart Battle</button>
+    <button id="btn-redeploy">Change Deployment</button>
+  </div>
+
+  <!-- Special Attack Choice Modal -->
+  <div id="attack-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
+    <div style="background:#1e1e3f; border:2px solid #c0c0c0; border-radius:12px; padding:16px; max-width:300px; width:90%; text-align:center;">
+      <div id="modal-title" style="font-weight:bold; margin-bottom:12px; color:#ffd700; font-size:0.85rem;"></div>
+      <button id="btn-basic" style="display:block; width:100%; margin:8px 0; padding:10px; background:#3498db; color:white; border:none; border-radius:6px; font-size:0.85rem;">Basic</button>
+      <button id="btn-special" style="display:block; width:100%; margin:8px 0; padding:10px; background:#e74c3c; color:white; border:none; border-radius:6px; font-size:0.85rem;">Special</button>
+      <button id="btn-donothing" style="display:block; width:100%; margin:8px 0; padding:10px; background:#8e6fce; color:white; border:none; border-radius:6px; font-size:0.9rem;">Do Nothing (skip this turn)</button>
+      <button id="btn-cancel" style="display:block; width:100%; margin:8px 0; padding:8px; background:#555; color:white; border:none; border-radius:6px; font-size:0.8rem;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Runic Crystal Choice Modal -->
+  <div id="crystal-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
+    <div style="background:#1e1e3f; border:2px solid #e0d0ff; border-radius:12px; padding:16px; max-width:300px; width:90%; text-align:center;">
+      <div id="crystal-modal-title" style="font-weight:bold; margin-bottom:12px; color:#e0d0ff; font-size:0.85rem;"></div>
+      <button id="btn-crystal-clear" style="display:block; width:100%; margin:8px 0; padding:10px; background:#9b59b6; color:white; border:none; border-radius:6px; font-size:0.85rem;">Clear All Tiles of This Color</button>
+      <button id="btn-crystal-wave" style="display:block; width:100%; margin:8px 0; padding:10px; background:#e74c3c; color:white; border:none; border-radius:6px; font-size:0.85rem;">🔮 Runic Wave (attack)</button>
+    </div>
+  </div>
+
+<script src="characters.js"></script>
+<script>
+// BASIC_COST, BASIC_DMG, SPECIAL_COST, SPECIAL_DMG, maxManaFor, CHARACTERS all come from characters.js.
+
+const COLORS = ['red', 'green', 'blue', 'yellow', 'purple'];
+const COLOR_HEX = { red: '#e74c3c', green: '#2ecc71', blue: '#3498db', yellow: '#f1c40f', purple: '#9b59b6' };
+const COLS = 7;
+const ROWS = 5;
+
+// ---------- BATTLEFIELD LAYOUT ----------
+// Team composition is fully flexible: each side fields at most TEAM_CAP
+// characters total (any mix of Ranged/Melee), not fixed slot counts.
+//
+// Both zones are placed by drag-and-drop, dragged out of the roster list:
+//   - Ranged has TEAM_CAP fixed, always-visible slots (a small grid the
+//     player picks from) — drop a Ranged hero on any empty slot to claim it,
+//     in whatever order the player likes. Dragging a placed Ranged hero lets
+//     the player move it to another empty slot, or drag it off the
+//     battlefield to remove it.
+//   - Melee has no fixed slots at all — it's a free vertical drop zone.
+//     While dragging a Melee hero up/down inside it, the Ranged slot(s) it
+//     would protect at the current pointer position light up live, computed
+//     purely from where the Ranged cards currently sit on screen.
+//
+// A Melee hero's on-screen ROW is independent from what it actually
+// PROTECTS — these used to be conflated (which caused two failed fix
+// attempts) and are now deliberately two separate things:
+//   - `band` is pure geometry: which Ranged slot it's level with, or the
+//     half-step gap between two adjacent Ranged slots it's straddling.
+//     { type: 'aligned', index: i }        — level with Ranged slot i
+//     { type: 'boundary', indices: [i, j] } — half-step, straddling slots i/j
+//     This is computed from the FIXED Ranged slot grid (RANGED_SLOTS always
+//     renders, filled or not), so it's always resolvable — placing a Melee
+//     hero next to a still-empty Ranged slot is fine.
+//   - `coverage` is what that position actually protects RIGHT NOW, derived
+//     from `band` plus which Ranged slots happen to be filled at the moment
+//     (see resolveMeleeCoverage): a boundary only protects both neighbors if
+//     BOTH are filled ("as long as both ranged are together"); if only one
+//     side has a Ranged hero, it just guards that one; if neither does, it
+//     guards nothing yet. Same shape as before: { type: 'aligned', lane } /
+//     { type: 'boundary', lanes: [i,j] } / null.
+// Coverage is binary — "partial" and "full" protection both fully block
+// opposing Melee from reaching that Ranged unit; no damage-reduction gradient.
+const TEAM_CAP = 5; // max characters per side, Ranged + Melee combined
+const RANGED_SLOTS = TEAM_CAP; // Ranged column always shows this many fixed slots
+
+// The enemy roster is randomized fresh every time the player (re)enters
+// deployment (see randomizeEnemyTeam() below and its call in
+// initDeployment()) rather than fixed. `let` (not `const`) because
+// randomizeEnemyTeam() reassigns this. The shape — TEAM_CAP total, 2 Ranged
+// + 3 Melee — matches what the enemy team has always had; the placeholder
+// value here only matters until the first randomizeEnemyTeam() call, which
+// always runs before this is ever read (initDeployment calls it before any
+// rendering or battle setup).
+let ENEMY_TEAM = {
+  ranged: ['lumi', 'saryn'], // lanes 0, 1
+  melee: [
+    { charId: 'korr', coverage: { type: 'aligned', lane: 0 } },
+    { charId: 'rorik', coverage: { type: 'boundary', lanes: [0, 1] } },
+    { charId: 'brick', coverage: { type: 'aligned', lane: 1 } }
+  ]
+};
+
+function charById(id) { return CHARACTERS.find(c => c.id === id); }
+
+// ---------- ENEMY TEAM RANDOMIZATION ----------
+// Design constraints (see DECISIONS.md): the enemy team must always show at
+// least 4 distinct colors among its 5 characters (out of 5 possible match-3
+// colors, so at most one same-color pair), and at most 2 of the 5 may be
+// Heroes (isSpecial) — i.e. at least 3 must be plain non-hero troops.
+function shuffledCopy(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function pickN(pool, n) { return shuffledCopy(pool).slice(0, n); }
+function randomIntUpTo(maxInclusive) { return Math.floor(Math.random() * (maxInclusive + 1)); }
+
+// Builds one candidate { rangedIds, meleeIds } draw. The hero cap (<=2 of 5)
+// is enforced BY CONSTRUCTION, not by rejecting random draws and hoping —
+// with 32 of 45 characters being Heroes, a fully-random 5-character draw
+// would satisfy "at most 2 Heroes" only rarely, so this explicitly decides
+// how many Heroes/non-Heroes go into each role (Ranged always needs exactly
+// 2 total characters, Melee always needs exactly 3) before picking specific
+// characters from the matching type+specialty bucket.
+function drawEnemyRoster(buckets) {
+  const RANGED_COUNT = 2, MELEE_COUNT = 3, MAX_HEROES = 2;
+  const heroCount = randomIntUpTo(MAX_HEROES); // 0, 1, or 2 Heroes total this draw
+  const rangedHeroCount = randomIntUpTo(heroCount); // rest of heroCount goes to Melee
+  const meleeHeroCount = heroCount - rangedHeroCount;
+  const rangedIds = shuffledCopy([
+    ...pickN(buckets.rangedHero, rangedHeroCount),
+    ...pickN(buckets.rangedNonHero, RANGED_COUNT - rangedHeroCount)
+  ]);
+  const meleeIds = shuffledCopy([
+    ...pickN(buckets.meleeHero, meleeHeroCount),
+    ...pickN(buckets.meleeNonHero, MELEE_COUNT - meleeHeroCount)
+  ]);
+  return { rangedIds, meleeIds };
+}
+
+function buildRandomEnemyRoster() {
+  const MIN_COLORS = 4;
+  const buckets = { rangedHero: [], rangedNonHero: [], meleeHero: [], meleeNonHero: [] };
+  CHARACTERS.forEach(c => {
+    const key = (c.type === 'ranged' ? 'ranged' : 'melee') + (c.isSpecial ? 'Hero' : 'NonHero');
+    buckets[key].push(c.id);
+  });
+  // The hero cap is already guaranteed by drawEnemyRoster's construction;
+  // this loop only retries for color diversity, a much friendlier
+  // probability, so a handful of attempts is always enough in practice —
+  // the hard cap below is just a safety net against a pathological miss.
+  let draw = null;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = drawEnemyRoster(buckets);
+    const colorCount = new Set([...candidate.rangedIds, ...candidate.meleeIds].map(id => charById(id).color)).size;
+    if (colorCount >= MIN_COLORS) { draw = candidate; break; }
+  }
+  return draw || drawEnemyRoster(buckets); // fallback: hero cap still holds even if color target is missed
+}
+
+// Same fixed lane-coverage pattern the original static team used (lane0 /
+// boundary-both / lane1) — a property of Ranged always having exactly 2
+// lanes, independent of which characters end up filling the 5 roles.
+function randomizeEnemyTeam() {
+  const { rangedIds, meleeIds } = buildRandomEnemyRoster();
+  ENEMY_TEAM = {
+    ranged: rangedIds,
+    melee: [
+      { charId: meleeIds[0], coverage: { type: 'aligned', lane: 0 } },
+      { charId: meleeIds[1], coverage: { type: 'boundary', lanes: [0, 1] } },
+      { charId: meleeIds[2], coverage: { type: 'aligned', lane: 1 } }
+    ]
+  };
+}
+// basicCostFor / basicDmgFor / maxManaFor come from characters.js — shared
+// with Roster.html so both screens agree on a character's actual attack cost.
+function primaryLane(coverage) {
+  if (!coverage) return 99; // uncovered melee sorts to the end
+  return coverage.type === 'aligned' ? coverage.lane : coverage.lanes[0];
+}
+function coverageLabel(coverage) {
+  if (!coverage) return '🛡 none';
+  if (coverage.type === 'aligned') return `🛡 R${coverage.lane + 1}`;
+  return `🛡 R${coverage.lanes[0] + 1}+R${coverage.lanes[1] + 1}`;
+}
+
+let board = [];          // board[y][x] = color string
+let boardSpecial = [];   // boardSpecial[y][x] = null | 'bomb' | 'crystal' (parallel to board)
+let heroes = [];         // live combat heroes (only populated once battle starts)
+let selectedTile = null; // {x,y}
+let selectedHero = null; // hero object
+let selectedAttackType = 'basic'; // 'basic' | 'special'
+let isAnimating = false;
+let pendingActionHero = null; // hero waiting for modal choice
+let currentTurn = 'player'; // 'player' | 'enemy' | 'none'
+let swapUsedThisTurn = false; // a turn = one tile swap, then attacks, then it's over
+let gamePhase = 'deploy'; // 'deploy' | 'battle'
+
+// Deployment state
+let deployAvailable = [];   // character ids still available for the player to place
+let deployActiveFilters = new Set(); // subset of 'melee' | 'ranged' | 'hero' | 'nonhero' — chips toggle independently and can be combined; see renderDeployRoster for the AND/OR rule
+// ranged: charId|null, fixed length RANGED_SLOTS, index = slot/lane the player dropped it on.
+// melee: {charId, band}[] — band = geometric row/half-step position (see
+// comment above); order in this array has no visual meaning anymore, each
+// card is positioned independently by its own band.
+let playerPlacements = { ranged: [], melee: [] };
+// In-progress drag (Ranged or Melee — only one at a time):
+//   Ranged: {kind:'ranged', charId, fromSlot, ghostEl, hoverSlot}
+//   Melee:  {kind:'melee', charId, meleeIndex, ghostEl, previewBand}
+let dragState = null;
+
+const boardEl = document.getElementById('board');
+const battlefieldEl = document.getElementById('battlefield');
+const boardWrapEl = document.getElementById('board-wrap');
+const infoTextEl = document.getElementById('info-text');
+
+function setBoardLocked(locked) {
+  if (boardWrapEl) boardWrapEl.classList.toggle('locked', locked);
+}
+const logEl = document.getElementById('log');
+
+function log(msg) {
+  logEl.innerHTML = msg + '<br>' + logEl.innerHTML;
+  if (logEl.children.length > 6) logEl.removeChild(logEl.lastChild);
+}
+
+const DEPLOY_INFO = `Deploy up to ${TEAM_CAP} heroes total. Drag a Ranged (🏹) hero onto any of the ${RANGED_SLOTS} Ranged slots — you choose the spot. Drag a Melee (⚔️) hero into the Melee column — it snaps to be level with whichever Ranged row you're closest to (gold highlight), or to the half-step gap between two adjacent rows to guard both (drop it straddling the gap). Any Ranged slot(s) it's actually protecting light up green. Drag any placed hero to move it, or drag it off the battlefield to remove it. Deploy at least one hero, then Start Battle.`;
+const BATTLE_INFO = 'Your turn = <b>one</b> tile swap (must create a match) — then attack with anyone who can.<br>' +
+  'Melee (⚔️) can\'t reach a Ranged (🏹) unit while any living enemy Melee is guarding that lane (fully aligned or half-step boundary between two lanes). Ranged can hit anyone.<br>' +
+  'Once no one can attack, the enemy takes their turn automatically.';
+
+function setInfoText(mode) {
+  if (!infoTextEl) return;
+  infoTextEl.innerHTML = mode === 'battle' ? BATTLE_INFO : DEPLOY_INFO;
+}
+
+// ---------- BATTLEFIELD COLUMN HELPER ----------
+// Battlefield is 4 independent columns (Player Ranged, Player Melee, Enemy
+// Melee, Enemy Ranged). The Player's two columns intentionally use the exact
+// same fixed-grid-Ranged / band-pixel-aligned-Melee layout as the deployment
+// screen (see renderDeployBattlefield) so a hero's on-screen row never shifts
+// between "Start Battle" and the live fight. Enemy columns are a fixed,
+// non-interactive roster and just center-stack, in both screens.
+function makeColumnEl(side, label) {
+  const col = document.createElement('div');
+  col.className = 'bf-column';
+  const labelEl = document.createElement('div');
+  labelEl.className = 'bf-column-label';
+  labelEl.style.color = side === 'player' ? '#4facfe' : '#f5576c';
+  labelEl.textContent = label;
+  col.appendChild(labelEl);
+  return col;
+}
+
+// ---------- HEROES (battle-live objects) ----------
+function createHeroFromChar(charDef, side, posInfo) {
+  return {
+    side,
+    charId: charDef.id,
+    name: charDef.name,
+    type: charDef.type,
+    color: charDef.color,
+    hp: charDef.hp,
+    maxHp: charDef.hp,
+    mana: 0,
+    maxMana: maxManaFor(charDef),
+    isSpecial: charDef.isSpecial,
+    abilityName: charDef.abilityName,
+    abilityText: charDef.abilityText,
+    simpleAbility: charDef.simpleAbility,
+    dead: false,
+    actedThisTurn: false,
+    laneIndex: posInfo.laneIndex, // Ranged only
+    coverage: posInfo.coverage,   // Melee only: {type,lane} | {type,lanes} | null
+    band: posInfo.band || null,   // Player Melee only: the geometric {type,index}/{type,indices} from
+                                   // deployment, kept around so the battle screen can pixel-align this
+                                   // card to the same Ranged row/gap it was snapped to during deployment
+                                   // (playerPlacements.ranged never changes mid-battle, so the band stays
+                                   // valid even for a Melee guarding an empty/never-filled Ranged slot).
+    el: null
+  };
+}
+
+function buildArmies() {
+  heroes = [];
+  const filledMask = playerPlacements.ranged.map(id => id !== null);
+  playerPlacements.ranged.forEach((id, laneIndex) => {
+    if (id) heroes.push(createHeroFromChar(charById(id), 'player', { laneIndex }));
+  });
+  playerPlacements.melee.forEach(entry => {
+    heroes.push(createHeroFromChar(charById(entry.charId), 'player', {
+      band: entry.band,
+      coverage: resolveMeleeCoverage(entry.band, filledMask)
+    }));
+  });
+  ENEMY_TEAM.ranged.forEach((id, laneIndex) => {
+    heroes.push(createHeroFromChar(charById(id), 'enemy', { laneIndex }));
+  });
+  ENEMY_TEAM.melee.forEach(entry => {
+    heroes.push(createHeroFromChar(charById(entry.charId), 'enemy', { coverage: entry.coverage }));
+  });
+}
+
+function buildHeroCardEl(h) {
+  const card = document.createElement('div');
+  card.className = `card ${h.side}` + (h.isSpecial ? ' special' : '') + (h.dead ? ' dead' : '');
+  card.dataset.color = h.color;
+  card.innerHTML = `
+    <div class="card-color-dot" style="background:${COLOR_HEX[h.color] || h.color}"></div>
+    <div class="card-icon">${h.type === 'ranged' ? '🏹' : '⚔️'}</div>
+    <div class="card-name">${h.name}</div>
+    <div class="hp-text">${h.hp}/${h.maxHp}</div>
+    <div class="mana-bar-bg">
+      <div class="mana-bar" style="width:${(h.mana / h.maxMana) * 100}%"></div>
+      <div class="mana-num">${h.mana}/${h.maxMana}</div>
+    </div>
+    ${h.type === 'melee' ? `<div class="coverage-tag">${coverageLabel(h.coverage)}</div>` : ''}
+  `;
+  card.addEventListener('click', () => onHeroClick(h));
+  return card;
+}
+
+// Positions a set of {el, band} pairs (live Melee hero cards, absolutely
+// positioned inside the Melee dropzone) so each is vertically level with the
+// Ranged slot its band is aligned to, or centered on the gap between two
+// adjacent slots for a boundary band — same math as layoutMeleeCards() below,
+// which does the identical job during deployment against playerPlacements.melee
+// directly. Kept as a separate function (rather than sharing one implementation)
+// so a change aimed at one screen can't accidentally regress the other.
+function positionMeleeCardPairs(pairs) {
+  const meleeColEl = document.querySelector('[data-role="player-melee-dropzone"]');
+  if (!meleeColEl || pairs.length === 0) return;
+  const slotRects = rangedSlotEls().map(el => el.getBoundingClientRect());
+  const colRect = meleeColEl.getBoundingClientRect();
+
+  const groups = new Map();
+  pairs.forEach(p => {
+    const key = bandKey(p.band);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  });
+
+  const FAN_STEP = 16; // px between stacked cards sharing the same row/half-step
+  groups.forEach(members => {
+    const band = members[0].band;
+    let targetY;
+    if (!band || slotRects.length === 0) {
+      targetY = colRect.top + 40;
+    } else if (band.type === 'aligned') {
+      const r = slotRects[band.index];
+      targetY = r ? (r.top + r.bottom) / 2 : colRect.top + 40;
+    } else {
+      const ra = slotRects[band.indices[0]], rb = slotRects[band.indices[1]];
+      targetY = (ra && rb) ? (ra.bottom + rb.top) / 2 : colRect.top + 40;
+    }
+    members.forEach((p, idx) => {
+      const cardHeight = p.el.getBoundingClientRect().height || 78;
+      const fanOffset = (idx - (members.length - 1) / 2) * FAN_STEP;
+      const top = (targetY + fanOffset) - colRect.top - cardHeight / 2;
+      p.el.style.top = Math.max(0, top) + 'px';
+    });
+  });
+}
+
+function renderBattlefield() {
+  battlefieldEl.innerHTML = '';
+
+  // --- Player Ranged: same fixed RANGED_SLOTS grid as deployment (so a
+  // filled slot's row never shifts), but a slot that was never filled during
+  // deployment renders invisible rather than as a dashed "empty slot" box —
+  // that dashed styling means "you can drop a card here", which stops being
+  // true the moment battle starts. It still occupies its row (visibility, not
+  // display:none) so the grid position/spacing — and the Ranged rects Melee
+  // band-positioning depends on — stay exactly what they were in deployment. ---
+  const rangedCol = makeColumnEl('player', 'YOU 🏹');
+  const playerRangedByLane = {};
+  heroes.filter(h => h.side === 'player' && h.type === 'ranged').forEach(h => { playerRangedByLane[h.laneIndex] = h; });
+  for (let i = 0; i < RANGED_SLOTS; i++) {
+    const hero = playerRangedByLane[i];
+    let slotEl;
+    if (hero) {
+      slotEl = buildHeroCardEl(hero);
+      hero.el = slotEl;
+    } else {
+      slotEl = document.createElement('div');
+      slotEl.className = 'card battle-empty-slot not-clickable';
+    }
+    slotEl.dataset.role = 'player-ranged-slot';
+    slotEl.dataset.slot = i;
+    rangedCol.appendChild(slotEl);
+  }
+  battlefieldEl.appendChild(rangedCol);
+
+  // --- Player Melee: same band-pixel-aligned absolute positioning as
+  // deployment (see renderDeployBattlefield / layoutMeleeCards), using each
+  // hero's `band` (preserved from deployment in buildArmies/createHeroFromChar)
+  // rather than sorting into a flat list — a card stays level with whichever
+  // Ranged row/gap the player snapped it to, exactly as it looked pre-battle. ---
+  const meleeCol = makeColumnEl('player', 'YOU ⚔️');
+  meleeCol.dataset.role = 'player-melee-dropzone';
+  // No .dropzone-hint here (unlike deployment) — the dashed "placement
+  // lining" is a drag-target affordance, and nothing is draggable once the
+  // battle has started. .melee-positioned keeps just the position:relative
+  // needed as a containing block for the absolutely-positioned Melee cards.
+  meleeCol.classList.add('melee-positioned');
+  const playerMeleeHeroes = heroes.filter(h => h.side === 'player' && h.type === 'melee');
+  const meleePairs = [];
+  if (playerMeleeHeroes.length === 0) {
+    // Same reasoning as the Ranged slots above: no dashed "empty slot" box
+    // during battle, just an invisible spacer so the column still stretches
+    // to the Ranged column's height.
+    const empty = document.createElement('div');
+    empty.className = 'card battle-empty-slot not-clickable';
+    meleeCol.appendChild(empty);
+  } else {
+    playerMeleeHeroes.forEach(hero => {
+      const card = buildHeroCardEl(hero);
+      card.style.position = 'absolute';
+      card.style.left = '0';
+      card.style.width = '100%';
+      hero.el = card;
+      meleeCol.appendChild(card);
+      meleePairs.push({ el: card, band: hero.band });
+    });
+  }
+  battlefieldEl.appendChild(meleeCol);
+  if (meleePairs.length > 0) positionMeleeCardPairs(meleePairs);
+
+  // --- Enemy Melee / Ranged: fixed, non-interactive, simply center-stacked —
+  // unchanged from before, and matches how the deployment screen also shows
+  // the enemy team (a plain centered list, no fixed-grid/band alignment). ---
+  const enemyCols = [
+    { type: 'melee', label: 'ENEMY ⚔️' },
+    { type: 'ranged', label: 'ENEMY 🏹' }
+  ];
+  enemyCols.forEach(colDef => {
+    const col = makeColumnEl('enemy', colDef.label);
+    col.classList.add('center-content');
+    if (colDef.type === 'melee') col.classList.add('side-divider'); // marks the YOU/ENEMY boundary
+    let list = heroes.filter(h => h.side === 'enemy' && h.type === colDef.type);
+    list.sort((a, b) => colDef.type === 'ranged' ? a.laneIndex - b.laneIndex : primaryLane(a.coverage) - primaryLane(b.coverage));
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'card empty-slot not-clickable';
+      col.appendChild(empty);
+    } else {
+      list.forEach(hero => {
+        const card = buildHeroCardEl(hero);
+        hero.el = card;
+        col.appendChild(card);
+      });
+    }
+    battlefieldEl.appendChild(col);
+  });
+}
+
+function updateHeroUI(h) {
+  if (!h.el) return;
+  h.el.classList.toggle('dead', h.dead);
+  h.el.classList.toggle('acted', h.actedThisTurn && !h.dead);
+  h.el.classList.toggle('selected', selectedHero === h);
+  const hpEl = h.el.querySelector('.hp-text');
+  if (hpEl) hpEl.textContent = `${h.hp}/${h.maxHp}`;
+  const bar = h.el.querySelector('.mana-bar');
+  if (bar) bar.style.width = `${(h.mana / h.maxMana) * 100}%`;
+  const num = h.el.querySelector('.mana-num');
+  if (num) num.textContent = `${h.mana}/${h.maxMana}`;
+}
+
+// ---------- DEPLOYMENT ----------
+// The player may choose from the FULL roster — the enemy's (now randomized)
+// team does not restrict which characters the player can pick; both sides
+// may field the same named character if the player chooses to, and the same
+// character can even come up on the enemy's side again next time.
+function initDeployment() {
+  randomizeEnemyTeam(); // fresh enemy squad every time deployment is (re)entered
+  deployAvailable = CHARACTERS.map(c => c.id);
+  playerPlacements = { ranged: new Array(RANGED_SLOTS).fill(null), melee: [] };
+  deployActiveFilters = new Set();
+  dragState = null;
+  gamePhase = 'deploy';
+  setInfoText('deploy');
+  document.getElementById('deploy-panel').style.display = 'block';
+  document.getElementById('board-wrap').style.display = 'none';
+  document.getElementById('turn-indicator').style.display = 'none';
+  document.getElementById('battle-controls').style.display = 'none';
+  renderDeployFilterBar();
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+}
+
+function sortDeployAvailable() {
+  const order = CHARACTERS.map(c => c.id);
+  deployAvailable.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+
+function placedCount() {
+  return playerPlacements.ranged.filter(id => id !== null).length + playerPlacements.melee.length;
+}
+
+function updateDeployStatus() {
+  const statusEl = document.getElementById('deploy-status');
+  const n = placedCount();
+  if (statusEl) statusEl.textContent = `${n} of ${TEAM_CAP} characters deployed`;
+  const btn = document.getElementById('btn-start-battle');
+  if (btn) btn.disabled = n === 0;
+}
+
+function renderDeployFilterBar() {
+  const bar = document.getElementById('deploy-filter-bar');
+  if (!bar) return;
+  const chipHtml = (key, label) => `<div class="filter-chip ${deployActiveFilters.has(key) ? 'active' : ''}" id="filter-${key}">${label}</div>`;
+  bar.innerHTML = `
+    ${chipHtml('melee', '⚔ Melee')}
+    ${chipHtml('ranged', '🏹 Ranged')}
+    ${chipHtml('hero', '★ Heroes')}
+    ${chipHtml('nonhero', '☆ Non-Heroes')}
+    <div class="filter-chip clear-chip" id="filter-clear">✕ Clear</div>
+  `;
+  ['melee', 'ranged', 'hero', 'nonhero'].forEach(key => {
+    document.getElementById(`filter-${key}`).addEventListener('click', () => {
+      if (deployActiveFilters.has(key)) deployActiveFilters.delete(key);
+      else deployActiveFilters.add(key);
+      renderDeployFilterBar();
+      renderDeployRoster();
+    });
+  });
+  document.getElementById('filter-clear').addEventListener('click', () => {
+    deployActiveFilters.clear();
+    renderDeployFilterBar();
+    renderDeployRoster();
+  });
+}
+
+// Both Ranged and Melee roster cards are drag-to-place: Ranged is dropped
+// onto whichever of the fixed slots the player wants; Melee is dropped
+// anywhere in the free-form Melee column, with its coverage computed live.
+// deployActiveFilters holds any combination of 'melee'/'ranged' (combat
+// type) and 'hero'/'nonhero' (isSpecial). Chips are no longer mutually
+// exclusive: multiple can be active at once. Within a group (type, or
+// hero/non-hero) active filters are OR'd — e.g. Melee+Ranged both on shows
+// everyone, same as neither. Across the two groups it's AND'd — e.g.
+// Heroes+Ranged narrows the list to Ranged Heroes only. An empty group
+// (no chips from it active) doesn't filter on that dimension at all.
+function renderDeployRoster() {
+  const root = document.getElementById('deploy-roster-list');
+  root.innerHTML = '';
+  const typeFilters = ['melee', 'ranged'].filter(k => deployActiveFilters.has(k));
+  const heroFilters = ['hero', 'nonhero'].filter(k => deployActiveFilters.has(k));
+  const visible = deployAvailable.filter(id => {
+    const cd = charById(id);
+    const typeOk = typeFilters.length === 0 || typeFilters.includes(cd.type);
+    const heroOk = heroFilters.length === 0 || heroFilters.some(f => f === 'hero' ? cd.isSpecial : !cd.isSpecial);
+    return typeOk && heroOk;
+  });
+  visible.forEach(id => {
+    const cd = charById(id);
+    const card = document.createElement('div');
+    card.className = 'roster-mini-card';
+    card.dataset.color = cd.color;
+    card.innerHTML = `
+      <div class="mini-color-dot" style="background:${COLOR_HEX[cd.color]}"></div>
+      <div class="mini-name">${cd.name}${cd.isSpecial ? ' ★' : ''}</div>
+      <div class="mini-sub">${cd.type === 'ranged' ? '🏹' : '⚔️'} drag to place · ${cd.class} · ${cd.hp} HP</div>
+    `;
+    card.style.touchAction = 'none';
+    if (cd.type === 'ranged') {
+      card.addEventListener('pointerdown', (e) => startRangedDrag(e, { charId: id, fromSlot: null }));
+    } else {
+      card.addEventListener('pointerdown', (e) => startMeleeDrag(e, { charId: id, meleeIndex: null }));
+    }
+    root.appendChild(card);
+  });
+}
+
+function unplaceRanged(slotIndex) {
+  const id = playerPlacements.ranged[slotIndex];
+  if (id) {
+    playerPlacements.ranged[slotIndex] = null;
+    deployAvailable.push(id);
+    sortDeployAvailable();
+  }
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+}
+
+function unplaceMelee(index) {
+  const [entry] = playerPlacements.melee.splice(index, 1);
+  if (entry) { deployAvailable.push(entry.charId); sortDeployAvailable(); }
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+}
+
+function buildDeployPreviewCard(side, type, cd, onClick) {
+  const card = document.createElement('div');
+  card.className = `card ${side}` + (cd.isSpecial ? ' special' : '');
+  card.dataset.color = cd.color;
+  card.innerHTML = `
+    <div class="card-color-dot" style="background:${COLOR_HEX[cd.color]}"></div>
+    <div class="card-icon">${type === 'ranged' ? '🏹' : '⚔️'}</div>
+    <div class="card-name">${cd.name}</div>
+    <div class="hp-text">${cd.hp} HP</div>
+  `;
+  if (onClick) {
+    card.addEventListener('click', onClick);
+  } else {
+    card.classList.add('not-clickable');
+    card.style.cursor = 'default';
+  }
+  return card;
+}
+
+function renderDeployBattlefield() {
+  battlefieldEl.innerHTML = '';
+
+  // --- Player Ranged: TEAM_CAP fixed slots, always shown, drag to fill/move ---
+  const rangedCol = makeColumnEl('player', 'YOU 🏹');
+  for (let i = 0; i < RANGED_SLOTS; i++) {
+    const id = playerPlacements.ranged[i];
+    let slotEl;
+    if (id) {
+      const cd = charById(id);
+      slotEl = buildDeployPreviewCard('player', 'ranged', cd, null);
+      slotEl.classList.remove('not-clickable');
+      slotEl.style.cursor = 'grab';
+      slotEl.style.touchAction = 'none';
+      slotEl.addEventListener('pointerdown', (e) => startRangedDrag(e, { charId: id, fromSlot: i }));
+    } else {
+      slotEl = document.createElement('div');
+      slotEl.className = 'card empty-slot not-clickable';
+      slotEl.innerHTML = `<div class="card-icon" style="opacity:0.4;">🏹</div><div style="font-size:0.5rem;color:#777;">drag here</div>`;
+    }
+    slotEl.dataset.role = 'player-ranged-slot';
+    slotEl.dataset.slot = i;
+    rangedCol.appendChild(slotEl);
+  }
+  battlefieldEl.appendChild(rangedCol);
+
+  // --- Player Melee: each card visually SNAPS to a row level with a Ranged
+  // slot, or the half-step gap between two adjacent Ranged slots — matching
+  // exactly what it's dropped near. Position (`band`) and what it actually
+  // protects (`coverage`, derived fresh here from band + which Ranged slots
+  // are filled right now) are independent — see the comment near TEAM_CAP.
+  const meleeCol = makeColumnEl('player', 'YOU ⚔️');
+  meleeCol.dataset.role = 'player-melee-dropzone';
+  meleeCol.classList.add('dropzone-hint', 'melee-positioned');
+  if (playerPlacements.melee.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'card empty-slot not-clickable';
+    empty.innerHTML = `<div class="card-icon" style="opacity:0.4;">⚔️</div><div style="font-size:0.5rem;color:#777;">drag here</div>`;
+    meleeCol.appendChild(empty);
+  } else {
+    const filledMask = playerPlacements.ranged.map(id => id !== null);
+    playerPlacements.melee.forEach((entry, i) => {
+      const cd = charById(entry.charId);
+      const card = buildDeployPreviewCard('player', 'melee', cd, null);
+      card.classList.remove('not-clickable');
+      card.style.cursor = 'grab';
+      card.style.touchAction = 'none';
+      card.style.position = 'absolute';
+      card.style.left = '0';
+      card.style.width = '100%';
+      card.dataset.meleeIndex = i;
+      const coverage = resolveMeleeCoverage(entry.band, filledMask);
+      const tag = document.createElement('div');
+      tag.className = 'coverage-tag';
+      tag.textContent = coverageLabel(coverage);
+      card.appendChild(tag);
+      card.addEventListener('pointerdown', (e) => startMeleeDrag(e, { charId: entry.charId, meleeIndex: i }));
+      meleeCol.appendChild(card);
+    });
+  }
+  battlefieldEl.appendChild(meleeCol);
+  if (playerPlacements.melee.length > 0) layoutMeleeCards();
+
+  // --- Enemy Melee / Ranged: display only, not draggable. ENEMY_TEAM is
+  // randomized fresh per deployment (see randomizeEnemyTeam) but always has
+  // exactly TEAM_CAP characters, same as before, so it's still centered
+  // vertically in its column to avoid looking pinned to the top next to the
+  // taller player columns. ---
+  const enemyMeleeCol = makeColumnEl('enemy', 'ENEMY ⚔️');
+  enemyMeleeCol.classList.add('center-content', 'side-divider'); // marks the YOU/ENEMY boundary
+  ENEMY_TEAM.melee.forEach(entry => {
+    const cd = charById(entry.charId);
+    const card = buildDeployPreviewCard('enemy', 'melee', cd, null);
+    const tag = document.createElement('div');
+    tag.className = 'coverage-tag';
+    tag.textContent = coverageLabel(entry.coverage);
+    card.appendChild(tag);
+    enemyMeleeCol.appendChild(card);
+  });
+  battlefieldEl.appendChild(enemyMeleeCol);
+
+  const enemyRangedCol = makeColumnEl('enemy', 'ENEMY 🏹');
+  enemyRangedCol.classList.add('center-content');
+  ENEMY_TEAM.ranged.forEach(id => {
+    enemyRangedCol.appendChild(buildDeployPreviewCard('enemy', 'ranged', charById(id), null));
+  });
+  battlefieldEl.appendChild(enemyRangedCol);
+}
+
+// ---------- DRAG-TO-PLACE (shared helpers) ----------
+function rectContains(rect, x, y) {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function buildGhost(cd, icon) {
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.textContent = `${icon} ${cd.name}`;
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
+function moveGhost(x, y) {
+  if (!dragState) return;
+  dragState.ghostEl.style.left = (x - 45) + 'px';
+  dragState.ghostEl.style.top = (y - 20) + 'px';
+}
+
+// Pure function: given the on-screen rects of all RANGED_SLOTS Ranged slots
+// (top to bottom, filled or empty — always the full fixed set) and a pointer
+// Y coordinate, decide whether a Melee card dropped there aligns to one slot
+// index or sits on the boundary between two adjacent slot indices.
+// Deliberately side-effect free (no DOM access, no knowledge of which slots
+// are filled) so the placement math is unit-testable in isolation.
+//
+// The boundary ("half step") hit-zone is deliberately generous — a wide band
+// centered on the midpoint between two adjacent slots' centers, sized as a
+// fraction of the pitch between them — NOT just the thin visual CSS gap
+// between the two cards. An earlier version used the literal gap (a few px)
+// as the boundary target, which was reported as "not easy to put it in
+// front of two ranged characters": a few-pixel-tall touch target is
+// unrealistic to hit reliably with a finger. BOUNDARY_FRACTION below controls
+// how much of the space between two slot centers counts as boundary
+// territory (the remainder is split evenly between the two "aligned" zones).
+const BOUNDARY_FRACTION = 0.6; // 60% of the pitch between two centers is boundary; 20% aligned on each side
+function computeSlotBand(rects, y) {
+  if (!rects || rects.length === 0) return null;
+  if (rects.length === 1) return { type: 'aligned', index: 0 };
+  const centers = rects.map(r => (r.top + r.bottom) / 2);
+  if (y <= centers[0]) return { type: 'aligned', index: 0 };
+  if (y >= centers[centers.length - 1]) return { type: 'aligned', index: centers.length - 1 };
+  for (let i = 0; i < centers.length - 1; i++) {
+    if (y > centers[i + 1]) continue;
+    const pitch = centers[i + 1] - centers[i];
+    const mid = (centers[i] + centers[i + 1]) / 2;
+    const boundaryHalfWidth = (pitch * BOUNDARY_FRACTION) / 2;
+    if (y >= mid - boundaryHalfWidth && y <= mid + boundaryHalfWidth) {
+      return { type: 'boundary', indices: [i, i + 1] };
+    }
+    return y < mid ? { type: 'aligned', index: i } : { type: 'aligned', index: i + 1 };
+  }
+  return { type: 'aligned', index: centers.length - 1 };
+}
+
+// Turns a geometric slot band into actual hero coverage, given which slots
+// are filled. A boundary only protects both neighbors if BOTH are filled
+// ("as long as both ranged are together"); if only one side has a Ranged
+// hero, the Melee just guards that one; if neither side is filled, it
+// protects nothing at that position.
+function resolveMeleeCoverage(band, filledMask) {
+  if (!band) return null;
+  if (band.type === 'aligned') {
+    return filledMask[band.index] ? { type: 'aligned', lane: band.index } : null;
+  }
+  const [a, b] = band.indices;
+  const aFilled = filledMask[a], bFilled = filledMask[b];
+  if (aFilled && bFilled) return { type: 'boundary', lanes: [a, b] };
+  if (aFilled) return { type: 'aligned', lane: a };
+  if (bFilled) return { type: 'aligned', lane: b };
+  return null;
+}
+
+function rangedSlotEls() {
+  return [...document.querySelectorAll('[data-role="player-ranged-slot"]')];
+}
+
+// ---------- RANGED DRAG-TO-PLACE ----------
+// Ranged always drops onto one of the RANGED_SLOTS fixed, always-visible
+// slots — the player picks exactly which one.
+function startRangedDrag(e, opts) {
+  if (gamePhase !== 'deploy') return;
+  e.preventDefault();
+  const cd = charById(opts.charId);
+  dragState = { kind: 'ranged', charId: opts.charId, fromSlot: opts.fromSlot, ghostEl: buildGhost(cd, '🏹'), hoverSlot: null };
+  moveGhost(e.clientX, e.clientY);
+  window.addEventListener('pointermove', onRangedDragMove);
+  window.addEventListener('pointerup', onRangedDragEnd);
+}
+
+function clearSlotHighlight() {
+  document.querySelectorAll('.drop-target-hover').forEach(el => el.classList.remove('drop-target-hover'));
+}
+
+function findRangedSlotUnderPoint(x, y) {
+  return rangedSlotEls().find(el => rectContains(el.getBoundingClientRect(), x, y)) || null;
+}
+
+function onRangedDragMove(e) {
+  if (!dragState || dragState.kind !== 'ranged') return;
+  moveGhost(e.clientX, e.clientY);
+  clearSlotHighlight();
+  const slotEl = findRangedSlotUnderPoint(e.clientX, e.clientY);
+  dragState.hoverSlot = slotEl ? Number(slotEl.dataset.slot) : null;
+  if (slotEl) slotEl.classList.add('drop-target-hover');
+}
+
+function onRangedDragEnd(e) {
+  if (!dragState || dragState.kind !== 'ranged') return;
+  window.removeEventListener('pointermove', onRangedDragMove);
+  window.removeEventListener('pointerup', onRangedDragEnd);
+  dragState.ghostEl.remove();
+  clearSlotHighlight();
+
+  const targetSlot = dragState.hoverSlot;
+  const { charId, fromSlot } = dragState;
+  dragState = null;
+
+  if (targetSlot === null) {
+    // Dropped outside any Ranged slot: cancel a new placement, or unplace if
+    // this was a drag of an already-placed card.
+    if (fromSlot != null) unplaceRanged(fromSlot);
+    return;
+  }
+
+  const occupant = playerPlacements.ranged[targetSlot];
+  if (occupant && occupant !== charId) {
+    log('That Ranged slot is already taken — drop on an empty one.');
+    return;
+  }
+
+  if (fromSlot != null) {
+    playerPlacements.ranged[fromSlot] = null;
+    playerPlacements.ranged[targetSlot] = charId;
+  } else {
+    if (placedCount() >= TEAM_CAP) {
+      log(`Team is full (max ${TEAM_CAP}).`);
+      return;
+    }
+    playerPlacements.ranged[targetSlot] = charId;
+    deployAvailable = deployAvailable.filter(id => id !== charId);
+  }
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+}
+
+// ---------- MELEE DRAG-TO-PLACE ----------
+// Melee is a free vertical drop zone — no fixed slots. Its coverage is
+// computed live from wherever the Ranged slots currently are on screen.
+function startMeleeDrag(e, opts) {
+  if (gamePhase !== 'deploy') return;
+  e.preventDefault();
+  const cd = charById(opts.charId);
+  dragState = { kind: 'melee', charId: opts.charId, meleeIndex: opts.meleeIndex, ghostEl: buildGhost(cd, '⚔️'), previewBand: null };
+  moveGhost(e.clientX, e.clientY);
+  window.addEventListener('pointermove', onMeleeDragMove);
+  window.addEventListener('pointerup', onMeleeDragEnd);
+}
+
+function clearGuardPreview() {
+  document.querySelectorAll('.guard-preview').forEach(el => el.classList.remove('guard-preview'));
+}
+
+function highlightCoverage(slotEls, coverage) {
+  if (!coverage) return;
+  const lanes = coverage.type === 'aligned' ? [coverage.lane] : coverage.lanes;
+  lanes.forEach(l => { if (slotEls[l]) slotEls[l].classList.add('guard-preview'); });
+}
+
+function bandKey(band) {
+  if (!band) return 'none';
+  return band.type === 'aligned' ? `a${band.index}` : `b${band.indices[0]}`;
+}
+
+// Runs after both the Ranged and Melee columns are in the DOM (so real
+// on-screen positions are available). Positions every placed Melee card so
+// it's vertically level with the Ranged slot its `band` is aligned to, or
+// centered on the gap between two adjacent slots if it's a boundary band —
+// this IS the "same row" / "half step" placement the player drags it to.
+// Cards sharing the same band are fanned out with a small vertical offset so
+// stacked guards on one row stay visible instead of fully overlapping.
+function layoutMeleeCards() {
+  const meleeColEl = document.querySelector('[data-role="player-melee-dropzone"]');
+  if (!meleeColEl) return;
+  const cardEls = [...meleeColEl.querySelectorAll('.card:not(.empty-slot)')];
+  if (cardEls.length === 0) return;
+  const slotRects = rangedSlotEls().map(el => el.getBoundingClientRect());
+  const colRect = meleeColEl.getBoundingClientRect();
+
+  const groups = new Map();
+  cardEls.forEach(el => {
+    const i = Number(el.dataset.meleeIndex);
+    const entry = playerPlacements.melee[i];
+    const key = bandKey(entry ? entry.band : null);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(el);
+  });
+
+  const FAN_STEP = 16; // px between stacked cards sharing the same row/half-step
+  groups.forEach(members => {
+    const i0 = Number(members[0].dataset.meleeIndex);
+    const band = playerPlacements.melee[i0] ? playerPlacements.melee[i0].band : null;
+    let targetY;
+    if (!band || slotRects.length === 0) {
+      targetY = colRect.top + 40;
+    } else if (band.type === 'aligned') {
+      const r = slotRects[band.index];
+      targetY = r ? (r.top + r.bottom) / 2 : colRect.top + 40;
+    } else {
+      const ra = slotRects[band.indices[0]], rb = slotRects[band.indices[1]];
+      targetY = (ra && rb) ? (ra.bottom + rb.top) / 2 : colRect.top + 40;
+    }
+    members.forEach((el, idx) => {
+      const cardHeight = el.getBoundingClientRect().height || 78;
+      const fanOffset = (idx - (members.length - 1) / 2) * FAN_STEP;
+      const top = (targetY + fanOffset) - colRect.top - cardHeight / 2;
+      el.style.top = Math.max(0, top) + 'px';
+    });
+  });
+}
+
+function onMeleeDragMove(e) {
+  if (!dragState || dragState.kind !== 'melee') return;
+  moveGhost(e.clientX, e.clientY);
+  clearGuardPreview();
+  clearSlotHighlight();
+  const dropzone = document.querySelector('[data-role="player-melee-dropzone"]');
+  const overDropzone = dropzone && rectContains(dropzone.getBoundingClientRect(), e.clientX, e.clientY);
+  if (overDropzone) {
+    const slotEls = rangedSlotEls();
+    const rects = slotEls.map(el => el.getBoundingClientRect());
+    const filledMask = playerPlacements.ranged.map(id => id !== null);
+    const band = computeSlotBand(rects, e.clientY); // always resolvable — Ranged slots always exist
+    const coverage = resolveMeleeCoverage(band, filledMask);
+    dragState.previewBand = band;
+    // Gold = "you'll snap to this row" (raw band, regardless of fill state).
+    // Green (via highlightCoverage below) = "and this one is actually
+    // protected" — takes visual priority over gold on the same slot.
+    if (band) {
+      const bandIndices = band.type === 'aligned' ? [band.index] : band.indices;
+      bandIndices.forEach(i => { if (slotEls[i]) slotEls[i].classList.add('drop-target-hover'); });
+    }
+    highlightCoverage(slotEls, coverage);
+  } else {
+    dragState.previewBand = null;
+  }
+}
+
+function onMeleeDragEnd(e) {
+  if (!dragState || dragState.kind !== 'melee') return;
+  window.removeEventListener('pointermove', onMeleeDragMove);
+  window.removeEventListener('pointerup', onMeleeDragEnd);
+  dragState.ghostEl.remove();
+  clearGuardPreview();
+  clearSlotHighlight();
+
+  const dropzone = document.querySelector('[data-role="player-melee-dropzone"]');
+  const overDropzone = dropzone && rectContains(dropzone.getBoundingClientRect(), e.clientX, e.clientY);
+
+  if (!overDropzone) {
+    // Dropped outside the Melee column: cancel a new placement, or unplace
+    // if this was a drag of an already-placed card.
+    if (dragState.meleeIndex != null) unplaceMelee(dragState.meleeIndex);
+    dragState = null;
+    return;
+  }
+
+  const band = dragState.previewBand; // geometric row/half-step position — always resolvable
+
+  if (dragState.meleeIndex != null) {
+    // Repositioning: just update which row/half-step it's on. Array
+    // position is irrelevant now — every card is placed independently by
+    // its own band, not by list order.
+    playerPlacements.melee[dragState.meleeIndex].band = band;
+  } else {
+    if (placedCount() >= TEAM_CAP) {
+      log(`Team is full (max ${TEAM_CAP}).`);
+      dragState = null;
+      return;
+    }
+    playerPlacements.melee.push({ charId: dragState.charId, band });
+    deployAvailable = deployAvailable.filter(id => id !== dragState.charId);
+  }
+  dragState = null;
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+}
+
+// ---------- MATCH-3 BOARD ----------
+// Match Type Rules (see DECISIONS.md for the full write-up):
+//   Match of 3           -> removes tiles, 1 mana/tile to every living
+//                            player hero of that color, no other effect.
+//   Match of 4           -> same 1 mana/tile, PLUS one cell becomes an
+//                            Arcane Bomb instead of clearing. When later
+//                            matched (caught in a fresh same-color group)
+//                            OR activated (any swap that touches its cell,
+//                            even without forming a new match) it clears
+//                            itself + its 4 orthogonal neighbors (all 5
+//                            still pay out mana by their OWN color), and
+//                            deals 2 damage to a random living enemy
+//                            Melee (front-line) unit.
+//   Match of 5+ (straight run, or a T/L/plus formed by two intersecting
+//   runs of >=3)          -> same 1 mana/tile, PLUS one cell becomes a
+//                            Runic Crystal. UNLIKE the bomb, a crystal
+//                            never auto-activates — its choice modal only
+//                            opens when the player directly TAPS its tile
+//                            (see onTileClick). Being incidentally caught
+//                            in a later match just clears it like an
+//                            ordinary tile (its group-share mana still
+//                            pays out, but the special effect is lost).
+//                            A tap counts as the turn's one board action,
+//                            same as a swap. On tap, the player chooses:
+//                            Option A clears every tile of that color on
+//                            the board (mana for all of them); Option B
+//                            ("Runic Wave") deals damage across all
+//                            RANGED_SLOTS rows to the enemy team instead
+//                            (no mana) — see resolveRunicWaveHits() for
+//                            the per-row targeting/cover math.
+// boardSpecial[y][x] mirrors board[y][x]: null | 'bomb' | 'crystal'. Cells
+// keep their normal color underneath a special tile (it still matches
+// normally for forming further lines), boardSpecial is purely metadata.
+function randomColor() {
+  return COLORS[Math.floor(Math.random() * COLORS.length)];
+}
+
+function createEmptyBoard() {
+  board = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  boardSpecial = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+}
+
+function fillBoardNoMatches() {
+  createEmptyBoard();
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      let c;
+      do {
+        c = randomColor();
+      } while (
+        (x >= 2 && board[y][x-1] === c && board[y][x-2] === c) ||
+        (y >= 2 && board[y-1][x] === c && board[y-2][x] === c)
+      );
+      board[y][x] = c;
+    }
+  }
+}
+
+function renderBoard() {
+  boardEl.innerHTML = '';
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const tile = document.createElement('div');
+      const color = board[y][x];
+      const special = boardSpecial[y][x];
+      if (!color) {
+        tile.className = 'tile empty';
+        tile.textContent = '';
+      } else {
+        tile.className = `tile ${color}` + (special ? ` special-${special}` : '');
+        tile.textContent = special === 'bomb' ? '💣' : special === 'crystal' ? '🔮' : color[0].toUpperCase();
+      }
+      tile.dataset.x = x;
+      tile.dataset.y = y;
+      tile.addEventListener('click', () => onTileClick(x, y));
+      boardEl.appendChild(tile);
+    }
+  }
+}
+
+function getTileEl(x, y) {
+  return boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+}
+
+// Cheap existence check ("did this swap create/leave any match on the
+// board?") — used by onTileClick and the cascade-continuation check. Kept
+// separate from findMatchGroups() (which does the more expensive connected-
+// component/shape work) since most calls here only need a yes/no answer.
+function findMatchedCells() {
+  const matched = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+
+  // Horizontal
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const color = board[y][x];
+      if (!color) { x++; continue; }
+      let len = 1;
+      while (x + len < COLS && board[y][x + len] === color) len++;
+      if (len >= 3) {
+        for (let i = 0; i < len; i++) matched[y][x + i] = true;
+      }
+      x += len;
+    }
+  }
+
+  // Vertical
+  for (let x = 0; x < COLS; x++) {
+    let y = 0;
+    while (y < ROWS) {
+      const color = board[y][x];
+      if (!color) { y++; continue; }
+      let len = 1;
+      while (y + len < ROWS && board[y + len][x] === color) len++;
+      if (len >= 3) {
+        for (let i = 0; i < len; i++) matched[y + i][x] = true;
+      }
+      y += len;
+    }
+  }
+
+  const cells = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (matched[y][x]) cells.push({x, y});
+    }
+  }
+  return {cells, hasMatches: cells.length > 0};
+}
+
+// Full match analysis for resolution: groups matched cells into same-color
+// orthogonally-connected components (this is what makes an intersecting
+// horizontal-3 + vertical-3 register as ONE 5-cell T/L/plus group instead
+// of two separate 3-groups), and records, per group, whether it has an
+// "intersection" cell (part of both a horizontal AND vertical run) — used
+// to place a newly-spawned special tile at the natural crossing point.
+function findMatchGroups() {
+  const hMatched = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+  const vMatched = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const color = board[y][x];
+      if (!color) { x++; continue; }
+      let len = 1;
+      while (x + len < COLS && board[y][x + len] === color) len++;
+      if (len >= 3) for (let i = 0; i < len; i++) hMatched[y][x + i] = true;
+      x += len;
+    }
+  }
+  for (let x = 0; x < COLS; x++) {
+    let y = 0;
+    while (y < ROWS) {
+      const color = board[y][x];
+      if (!color) { y++; continue; }
+      let len = 1;
+      while (y + len < ROWS && board[y + len][x] === color) len++;
+      if (len >= 3) for (let i = 0; i < len; i++) vMatched[y + i][x] = true;
+      y += len;
+    }
+  }
+
+  const visited = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+  const groups = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const isMatched = hMatched[y][x] || vMatched[y][x];
+      if (!isMatched || visited[y][x]) continue;
+      const color = board[y][x];
+      const cells = [];
+      const queue = [{x, y}];
+      visited[y][x] = true;
+      while (queue.length) {
+        const cur = queue.shift();
+        cells.push(cur);
+        [{x: cur.x + 1, y: cur.y}, {x: cur.x - 1, y: cur.y}, {x: cur.x, y: cur.y + 1}, {x: cur.x, y: cur.y - 1}].forEach(n => {
+          if (n.x < 0 || n.x >= COLS || n.y < 0 || n.y >= ROWS) return;
+          if (visited[n.y][n.x]) return;
+          if (!(hMatched[n.y][n.x] || vMatched[n.y][n.x])) return;
+          if (board[n.y][n.x] !== color) return;
+          visited[n.y][n.x] = true;
+          queue.push(n);
+        });
+      }
+      const intersection = cells.find(c => hMatched[c.y][c.x] && vMatched[c.y][c.x]) || null;
+      groups.push({color, cells, intersection});
+    }
+  }
+  return groups;
+}
+
+// Chooses where a newly-spawned special tile (Arcane Bomb / Runic Crystal)
+// appears within its group: the cell the player just swapped into place if
+// it's part of this group (feels natural — the tile you moved is the one
+// that "becomes" the bomb/crystal), else the group's intersection cell for
+// a T/L/plus shape, else the middle cell of a straight run.
+function pickSpawnCell(group, swapHintCells) {
+  if (swapHintCells) {
+    const hit = group.cells.find(c => swapHintCells.some(s => s.x === c.x && s.y === c.y));
+    if (hit) return hit;
+  }
+  if (group.intersection) return group.intersection;
+  const sameRow = new Set(group.cells.map(c => c.y)).size === 1;
+  const sorted = group.cells.slice().sort((a, b) => sameRow ? a.x - b.x : a.y - b.y);
+  return sorted[Math.floor((sorted.length - 1) / 2)];
+}
+
+function applyGravityAndFill() {
+  for (let x = 0; x < COLS; x++) {
+    // Collect existing (color, special) pairs from bottom to top, together,
+    // so a special tile falls as a unit rather than losing its status.
+    const colorStack = [];
+    const specialStack = [];
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (board[y][x]) { colorStack.push(board[y][x]); specialStack.push(boardSpecial[y][x]); }
+    }
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (colorStack.length > 0) {
+        board[y][x] = colorStack.shift();
+        boardSpecial[y][x] = specialStack.shift();
+      } else {
+        board[y][x] = randomColor(); // new tile falls in from top
+        boardSpecial[y][x] = null;
+      }
+    }
+  }
+}
+
+// Grants 1 mana per tile to every living player hero of `color` — the base
+// rule shared by every match tier, and by each individual tile touched by
+// an Arcane Bomb blast or a Runic Crystal's color-clear (each pays out by
+// ITS OWN color, not the triggering group/special's color). Returns how
+// many heroes actually received mana (0 means "no hero of this color").
+function grantMana(color, amount) {
+  const matching = heroes.filter(h => h.side === 'player' && !h.dead && h.color === color);
+  matching.forEach(h => {
+    const before = h.mana;
+    h.mana = Math.min(h.maxMana, h.mana + amount);
+    updateHeroUI(h);
+    if (h.mana > before && h.el) {
+      h.el.classList.remove('gained');
+      void h.el.offsetWidth; // reflow
+      h.el.classList.add('gained');
+      setTimeout(() => { if (h.el) h.el.classList.remove('gained'); }, 700);
+    }
+  });
+  return matching.length;
+}
+
+// Applies damage from a board-driven effect (Arcane Bomb, Runic Wave) —
+// same hp/death/log handling performAttack() uses, plus the same win/loss
+// check, since a board effect can end the battle exactly like an attack.
+function dealBoardDamage(target, dmg, sourceLabel) {
+  if (!target || target.dead) return;
+  target.hp -= dmg;
+  if (target.hp <= 0) {
+    target.hp = 0;
+    target.dead = true;
+    log(`${sourceLabel} defeated ${target.name}!`);
+  } else {
+    log(`${sourceLabel} hit ${target.name} for ${dmg} (${target.hp} HP left)`);
+  }
+  updateHeroUI(target);
+  const enemiesAlive = heroes.filter(h => h.side === 'enemy' && !h.dead).length;
+  const playersAlive = heroes.filter(h => h.side === 'player' && !h.dead).length;
+  if (enemiesAlive === 0) {
+    log('🎉 YOU WIN! All enemies defeated.');
+    currentTurn = 'none';
+    updateTurnUI();
+  } else if (playersAlive === 0) {
+    log('💀 DEFEAT — all your heroes have fallen.');
+    currentTurn = 'none';
+    updateTurnUI();
+  }
+}
+
+// True if a (frozen-at-battle-start) melee coverage value guards `lane` —
+// shared by targeting rules elsewhere and by the Runic Wave below.
+function coverageIncludesLane(coverage, lane) {
+  if (!coverage) return false;
+  return coverage.type === 'aligned' ? coverage.lane === lane : coverage.lanes.includes(lane);
+}
+
+// Runic Crystal Option B. A wave travels down all RANGED_SLOTS rows at once
+// and, in each row, hits only the first living enemy it meets:
+//   - No guarding Melee in that row -> the Ranged unit there (if any) takes
+//     the full 3.
+//   - A Melee fully aligned to that row -> the Melee takes the full 3, the
+//     Ranged unit behind is completely protected (0).
+//   - A Melee straddling that row and the next (boundary coverage) -> the
+//     Melee still takes 3 (once, not once per row it straddles); of its two
+//     covered Ranged units, ONE stays fully protected and the OTHER is
+//     "half exposed" and takes ceil(3/2)=2. The data model treats a
+//     boundary's two lanes symmetrically (no stored "leans left/right"), so
+//     which lane is the exposed one is decided at random per activation —
+//     see DECISIONS.md for why.
+function resolveRunicWaveHits() {
+  const hits = [];
+  const exposedLaneByMelee = new Map();
+  for (let lane = 0; lane < RANGED_SLOTS; lane++) {
+    const guard = heroes.find(h => h.side === 'enemy' && h.type === 'melee' && !h.dead && coverageIncludesLane(h.coverage, lane));
+    const rangedHere = heroes.find(h => h.side === 'enemy' && h.type === 'ranged' && !h.dead && h.laneIndex === lane);
+    if (guard) {
+      if (!hits.some(hh => hh.hero === guard)) hits.push({hero: guard, dmg: 3});
+      if (rangedHere) {
+        if (guard.coverage.type === 'aligned') {
+          // fully protected — no damage
+        } else {
+          if (!exposedLaneByMelee.has(guard)) {
+            const [a, b] = guard.coverage.lanes;
+            exposedLaneByMelee.set(guard, Math.random() < 0.5 ? a : b);
+          }
+          if (exposedLaneByMelee.get(guard) === lane) hits.push({hero: rangedHere, dmg: 2});
+        }
+      }
+    } else if (rangedHere) {
+      hits.push({hero: rangedHere, dmg: 3});
+    }
+  }
+  return hits;
+}
+
+// Arcane Bomb: clears itself + its 4 orthogonal neighbors. The bomb's own
+// cell is expected to already be in `toClear` (matched as part of a group,
+// or seeded directly for a swap-activation) with its mana already granted
+// by the caller — this only handles the 4 neighbors (each pays out by its
+// OWN color) plus the 2-damage hit. Any neighbor that itself holds a
+// pre-existing special is queued for its own explosion (chain reaction).
+function applyBombExplosion(item, toClear, explosionQueue, queuedKeys, logParts) {
+  const {x, y} = item;
+  // The bomb's own tile always clears + pays its own base 1 mana too,
+  // regardless of trigger path (mirrors applyCrystalEffect's self-handling).
+  // When the bomb was caught in a fresh match, the group loop in
+  // processMatches() already added this cell to `toClear` and paid its
+  // mana as part of the group's per-tile total — skip re-paying it here.
+  const selfKey = `${x},${y}`;
+  const selfColor = item.color || board[y][x];
+  if (!toClear.has(selfKey) && selfColor) {
+    toClear.add(selfKey);
+    grantMana(selfColor, 1);
+    logParts.push(`${selfColor} +1 (bomb core)`);
+  }
+  const affected = {};
+  [{x: x + 1, y}, {x: x - 1, y}, {x, y: y + 1}, {x, y: y - 1}].forEach(n => {
+    if (n.x < 0 || n.x >= COLS || n.y < 0 || n.y >= ROWS) return;
+    const k = `${n.x},${n.y}`;
+    const nColor = board[n.y][n.x];
+    if (!nColor || toClear.has(k)) return;
+    toClear.add(k);
+    affected[nColor] = (affected[nColor] || 0) + 1;
+    const nType = boardSpecial[n.y][n.x];
+    if (nType && !queuedKeys.has(k)) {
+      queuedKeys.add(k);
+      explosionQueue.push({x: n.x, y: n.y, type: nType});
+    }
+  });
+  Object.entries(affected).forEach(([c, cnt]) => {
+    grantMana(c, cnt);
+    logParts.push(`${c} +${cnt} (bomb blast)`);
+  });
+
+  const frontline = heroes.filter(h => h.side === 'enemy' && h.type === 'melee' && !h.dead);
+  if (frontline.length > 0) {
+    const target = frontline[Math.floor(Math.random() * frontline.length)];
+    dealBoardDamage(target, 2, '💣 Arcane Bomb');
+  } else {
+    log('💣 Arcane Bomb detonates, but there\'s no living enemy front-line unit to hit.');
+  }
+}
+
+// Runic Crystal: the crystal's own tile always clears + pays its base 1
+// mana first (regardless of trigger path — see DECISIONS.md), then the
+// player's chosen option applies on top.
+function applyCrystalEffect(item, choice, toClear, explosionQueue, queuedKeys, logParts) {
+  const {x, y, color} = item;
+  const selfKey = `${x},${y}`;
+  if (!toClear.has(selfKey)) {
+    toClear.add(selfKey);
+    grantMana(color, 1);
+    logParts.push(`${color} +1 (crystal)`);
+  }
+  if (choice === 'clear') {
+    let count = 0;
+    for (let yy = 0; yy < ROWS; yy++) {
+      for (let xx = 0; xx < COLS; xx++) {
+        if (board[yy][xx] !== color) continue;
+        const k = `${xx},${yy}`;
+        if (toClear.has(k)) continue;
+        toClear.add(k);
+        count++;
+        const t = boardSpecial[yy][xx];
+        if (t && !queuedKeys.has(k)) { queuedKeys.add(k); explosionQueue.push({x: xx, y: yy, type: t}); }
+      }
+    }
+    if (count > 0) {
+      grantMana(color, count);
+      logParts.push(`${color} +${count} (Runic Crystal: Clear Color)`);
+    }
+    log(`🔮 Runic Crystal clears every ${color} tile on the board!`);
+  } else {
+    const hits = resolveRunicWaveHits();
+    if (hits.length === 0) {
+      log('🔮 Runic Wave surges forward but finds no living enemy to strike.');
+    } else {
+      hits.forEach(h => dealBoardDamage(h.hero, h.dmg, '🔮 Runic Wave'));
+    }
+  }
+}
+
+const crystalModal = document.getElementById('crystal-modal');
+const crystalModalTitle = document.getElementById('crystal-modal-title');
+const btnCrystalClear = document.getElementById('btn-crystal-clear');
+const btnCrystalWave = document.getElementById('btn-crystal-wave');
+
+function showCrystalChoiceModal(color, onChoice) {
+  crystalModalTitle.textContent = `🔮 Runic Crystal (${color}) — choose an effect:`;
+  crystalModal.style.display = 'flex';
+  const cleanup = () => {
+    crystalModal.style.display = 'none';
+    btnCrystalClear.onclick = null;
+    btnCrystalWave.onclick = null;
+  };
+  btnCrystalClear.onclick = () => { cleanup(); onChoice('clear'); };
+  btnCrystalWave.onclick = () => { cleanup(); onChoice('wave'); };
+}
+
+// Walks the explosion queue one item at a time (a plain loop can't pause
+// for the player's Runic Crystal choice, so this recurses via callback
+// instead). Bomb/crystal handlers may push more items onto `queue` for a
+// chain reaction — since we always advance to idx+1, anything appended
+// while processing idx is still visited later in the same walk.
+function processExplosionQueue(queue, idx, toClear, queuedKeys, logParts, done) {
+  if (idx >= queue.length) { done(); return; }
+  const item = queue[idx];
+  if (item.type === 'bomb') {
+    applyBombExplosion(item, toClear, queue, queuedKeys, logParts);
+    processExplosionQueue(queue, idx + 1, toClear, queuedKeys, logParts, done);
+  } else {
+    showCrystalChoiceModal(item.color, (choice) => {
+      applyCrystalEffect(item, choice, toClear, queue, queuedKeys, logParts);
+      processExplosionQueue(queue, idx + 1, toClear, queuedKeys, logParts, done);
+    });
+  }
+}
+
+// Processes one full match-resolution wave: detects same-color connected
+// groups, grants mana, spawns Arcane Bombs (4-cell groups) / Runic Crystals
+// (5+-cell groups), and explodes any pre-existing special tile caught in
+// this wave's matched cells. `swapHint` ([{x,y},{x,y}], optional) biases a
+// newly-spawned special toward the cell the player's own swap landed on.
+// `activationSeeds` ([{x,y,color,type}], optional) are special tiles the
+// player deliberately activated without necessarily forming a new match —
+// an Arcane Bomb via a swap that touches it, or a Runic Crystal via a
+// direct tap — see onTileClick — resolved through the same explosion-queue
+// machinery.
+function processMatches(swapHint, activationSeeds) {
+  const groups = findMatchGroups();
+  if (groups.length === 0 && (!activationSeeds || activationSeeds.length === 0)) {
+    isAnimating = false;
+    selectedTile = null;
+    checkAutoEndPlayerTurn();
+    return;
+  }
+
+  const preExisting = boardSpecial.map(row => row.slice());
+  const toClear = new Set();
+  const spawns = [];
+  const explosionQueue = [];
+  const queuedKeys = new Set();
+  const logParts = [];
+
+  function queueExplosionIfSpecial(x, y) {
+    const type = preExisting[y][x];
+    if (!type) return;
+    // Runic Crystals no longer auto-activate by being incidentally caught in
+    // a fresh match — only a direct tap on the crystal (see onTileClick)
+    // opens its choice modal. Caught-in-a-match crystals just clear like any
+    // other matched tile (still paying their share of the group's mana).
+    // Arcane Bombs are unaffected — being matched still detonates them.
+    if (type !== 'bomb') return;
+    const k = `${x},${y}`;
+    if (queuedKeys.has(k)) return;
+    queuedKeys.add(k);
+    explosionQueue.push({x, y, color: board[y][x], type});
+  }
+
+  (activationSeeds || []).forEach(seed => {
+    const k = `${seed.x},${seed.y}`;
+    if (queuedKeys.has(k)) return;
+    queuedKeys.add(k);
+    explosionQueue.push(seed);
+  });
+
+  groups.forEach(group => {
+    const spawnType = group.cells.length >= 5 ? 'crystal' : group.cells.length === 4 ? 'bomb' : null;
+    const spawnCell = spawnType ? pickSpawnCell(group, swapHint) : null;
+    group.cells.forEach(c => {
+      if (spawnCell && c.x === spawnCell.x && c.y === spawnCell.y) {
+        queueExplosionIfSpecial(c.x, c.y); // overwriting a pre-existing special still "matches" it
+        return;
+      }
+      toClear.add(`${c.x},${c.y}`);
+      queueExplosionIfSpecial(c.x, c.y);
+    });
+    if (spawnCell) spawns.push({x: spawnCell.x, y: spawnCell.y, color: group.color, type: spawnType});
+    const gain = group.cells.length; // 1 mana per tile, every tier
+    const grantedTo = grantMana(group.color, gain);
+    logParts.push(`${group.color} +${gain}${spawnCell ? ` (spawns ${spawnType === 'crystal' ? 'Runic Crystal' : 'Arcane Bomb'})` : ''}${grantedTo === 0 ? ' (no hero of this color)' : ''}`);
+  });
+  if (logParts.length > 0) log(`Match! ${logParts.join(' | ')}`);
+
+  processExplosionQueue(explosionQueue, 0, toClear, queuedKeys, logParts, () => {
+    toClear.forEach(k => {
+      const [cx, cy] = k.split(',').map(Number);
+      board[cy][cx] = null;
+      boardSpecial[cy][cx] = null;
+    });
+    spawns.forEach(s => {
+      if (toClear.has(`${s.x},${s.y}`)) return; // consumed by an explosion before it could spawn
+      board[s.y][s.x] = s.color;
+      boardSpecial[s.y][s.x] = s.type;
+    });
+    renderBoard();
+
+    setTimeout(() => {
+      applyGravityAndFill();
+      renderBoard();
+
+      setTimeout(() => {
+        const again = findMatchedCells();
+        if (again.hasMatches) {
+          processMatches(); // cascades never carry a swap hint or activation seed
+        } else {
+          isAnimating = false;
+          selectedTile = null;
+          checkAutoEndPlayerTurn();
+        }
+      }, 220);
+    }, 280);
+  });
+}
+
+function onTileClick(x, y) {
+  if (gamePhase !== 'battle' || isAnimating || currentTurn !== 'player') return;
+  if (swapUsedThisTurn) {
+    log('You already used this turn\'s one board action (swap or crystal tap) — attack with anyone who can, then the turn ends.');
+    return;
+  }
+  if (selectedHero) {
+    selectedHero = null;
+    heroes.forEach(updateHeroUI);
+  }
+
+  // Ignore clicks on empty tiles
+  if (!board[y][x]) return;
+
+  // Runic Crystal: a direct tap activates it immediately (opens the choice
+  // modal) instead of joining the normal select-then-swap flow — the
+  // crystal's options must not appear until the player deliberately taps it
+  // (not from being incidentally caught in a later match, and not from an
+  // unrelated swap merely touching it — see queueExplosionIfSpecial and the
+  // swap branch below). A crystal's own cell can never be used as one half
+  // of a normal two-tile swap once it exists on the board. Counts as this
+  // turn's one board action, same as a normal swap.
+  if (boardSpecial[y][x] === 'crystal') {
+    if (selectedTile) {
+      const prevEl = getTileEl(selectedTile.x, selectedTile.y);
+      if (prevEl) prevEl.classList.remove('selected');
+      selectedTile = null;
+    }
+    const el = getTileEl(x, y);
+    if (el) el.classList.add('selected');
+    isAnimating = true;
+    swapUsedThisTurn = true;
+    setBoardLocked(true);
+    setTimeout(() => {
+      if (el) el.classList.remove('selected');
+      processMatches(null, [{x, y, color: board[y][x], type: 'crystal'}]);
+    }, 120);
+    return;
+  }
+
+  if (!selectedTile) {
+    selectedTile = {x, y};
+    const el = getTileEl(x, y);
+    if (el) el.classList.add('selected');
+    return;
+  }
+
+  // second click
+  const x1 = selectedTile.x, y1 = selectedTile.y;
+  const prevEl = getTileEl(x1, y1);
+  if (prevEl) prevEl.classList.remove('selected');
+
+  // adjacent?
+  const dx = Math.abs(x - x1), dy = Math.abs(y - y1);
+  if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+    // swap (color AND special status move together)
+    const tmpColor = board[y1][x1], tmpSpecial = boardSpecial[y1][x1];
+    board[y1][x1] = board[y][x];
+    boardSpecial[y1][x1] = boardSpecial[y][x];
+    board[y][x] = tmpColor;
+    boardSpecial[y][x] = tmpSpecial;
+    renderBoard();
+
+    // A swap that touches an Arcane Bomb is always allowed — that's what
+    // "activated" (as opposed to "matched") means for a bomb, a deliberate
+    // detonation even without forming a new color-match — in addition to the
+    // normal "did this create a match" check. Runic Crystals are excluded
+    // here (and can't be, since a crystal tile is intercepted above before
+    // ever reaching this swap logic) — a crystal only ever activates via a
+    // direct tap.
+    const {hasMatches} = findMatchedCells();
+    const activationSeeds = [];
+    if (boardSpecial[y1][x1] === 'bomb') activationSeeds.push({x: x1, y: y1, color: board[y1][x1], type: 'bomb'});
+    if (boardSpecial[y][x] === 'bomb') activationSeeds.push({x, y, color: board[y][x], type: 'bomb'});
+
+    if (hasMatches || activationSeeds.length > 0) {
+      isAnimating = true;
+      selectedTile = null;
+      swapUsedThisTurn = true; // a turn only gets one swap
+      setBoardLocked(true);
+      const swapHint = [{x: x1, y: y1}, {x, y}];
+      setTimeout(() => processMatches(swapHint, activationSeeds), 120);
+    } else {
+      // revert
+      board[y][x] = board[y1][x1];
+      boardSpecial[y][x] = boardSpecial[y1][x1];
+      board[y1][x1] = tmpColor;
+      boardSpecial[y1][x1] = tmpSpecial;
+      renderBoard();
+      log('No match – swap reverted');
+      selectedTile = null;
+    }
+  } else {
+    // not adjacent – select the new one
+    selectedTile = {x, y};
+    const el = getTileEl(x, y);
+    if (el) el.classList.add('selected');
+  }
+}
+
+// ---------- COMBAT ----------
+const modal = document.getElementById('attack-modal');
+const modalTitle = document.getElementById('modal-title');
+const btnBasic = document.getElementById('btn-basic');
+const btnSpecial = document.getElementById('btn-special');
+const btnDoNothing = document.getElementById('btn-donothing');
+const btnCancel = document.getElementById('btn-cancel');
+
+btnBasic.onclick = () => {
+  if (!pendingActionHero) return;
+  const cost = basicCostFor(pendingActionHero);
+  if (pendingActionHero.mana < cost) {
+    log(`Not enough mana for Basic (need ${cost}).`);
+    return;
+  }
+  selectedHero = pendingActionHero;
+  selectedAttackType = 'basic';
+  pendingActionHero = null;
+  modal.style.display = 'none';
+  heroes.forEach(updateHeroUI);
+  log(`Selected ${selectedHero.name} — BASIC. Tap an enemy.`);
+};
+
+btnSpecial.onclick = () => {
+  if (!pendingActionHero) return;
+  if (pendingActionHero.mana < SPECIAL_COST) {
+    log('Not enough mana for Special (need 5).');
+    return;
+  }
+  selectedHero = pendingActionHero;
+  selectedAttackType = 'special';
+  pendingActionHero = null;
+  modal.style.display = 'none';
+  heroes.forEach(updateHeroUI);
+  log(`Selected ${selectedHero.name} — SPECIAL ★. Tap an enemy.`);
+};
+
+btnDoNothing.onclick = () => {
+  if (!pendingActionHero) return;
+  const h = pendingActionHero;
+  h.actedThisTurn = true;
+  pendingActionHero = null;
+  selectedHero = null;
+  selectedAttackType = 'basic';
+  modal.style.display = 'none';
+  heroes.forEach(updateHeroUI);
+  log(`${h.name} does nothing this turn.`);
+  checkAutoEndPlayerTurn();
+};
+
+btnCancel.onclick = () => {
+  pendingActionHero = null;
+  modal.style.display = 'none';
+  log('Attack cancelled.');
+};
+
+// Which ranged lanes are currently protected by a living melee hero on the
+// given side (each melee hero carries its own `coverage`, assigned at
+// deployment — either aligned to one lane, a boundary between two, or null).
+function getCoveredLanes(side) {
+  const covered = new Set();
+  heroes.forEach(h => {
+    if (h.side === side && h.type === 'melee' && !h.dead && h.coverage) {
+      if (h.coverage.type === 'aligned') covered.add(h.coverage.lane);
+      else if (h.coverage.type === 'boundary') h.coverage.lanes.forEach(l => covered.add(l));
+    }
+  });
+  return covered;
+}
+
+// Melee can always reach enemy Melee. Melee can only reach a specific enemy
+// Ranged lane once no living enemy Melee occupies a slot covering that lane
+// (fully aligned or half-step boundary). Ranged can always attack anyone.
+function getValidTargets(attacker) {
+  const enemySide = attacker.side === 'player' ? 'enemy' : 'player';
+  const enemyMelee = heroes.filter(h => h.side === enemySide && h.type === 'melee' && !h.dead);
+  const enemyRanged = heroes.filter(h => h.side === enemySide && h.type === 'ranged' && !h.dead);
+  if (attacker.type === 'ranged') return [...enemyMelee, ...enemyRanged];
+  const coveredLanes = getCoveredLanes(enemySide);
+  const reachableRanged = enemyRanged.filter(h => !coveredLanes.has(h.laneIndex));
+  return [...enemyMelee, ...reachableRanged];
+}
+
+function onHeroClick(h) {
+  if (gamePhase !== 'battle' || isAnimating || h.dead || currentTurn !== 'player') return;
+
+  // Only left side (player) can be selected as attacker
+  if (h.side === 'player') {
+    if (!swapUsedThisTurn) {
+      log('Swap two tiles first — attacks come after your swap.');
+      return;
+    }
+    // Deselect if clicking the same one again
+    if (selectedHero === h) {
+      selectedHero = null;
+      selectedAttackType = 'basic';
+      updateHeroUI(h);
+      log('Deselected.');
+      return;
+    }
+
+    if (h.actedThisTurn) {
+      log(`${h.name} already acted this turn.`);
+      return;
+    }
+
+    const myBasicCost = basicCostFor(h);
+    if (h.mana < myBasicCost) {
+      log(`${h.name} needs at least ${myBasicCost} mana (has ${h.mana})`);
+      return;
+    }
+
+    // Only heroes with multiple attack choices (specials) get the action
+    // popup with a "Do Nothing" option. Normal heroes have just one option
+    // (Basic Attack), so they select directly and must use it if they can.
+    if (h.isSpecial) {
+      pendingActionHero = h;
+      modalTitle.textContent = `${h.name} ★${h.abilityName ? ' — ' + h.abilityName : ''} (mana: ${h.mana}/${h.maxMana})`;
+      btnBasic.textContent = `Basic (${myBasicCost} mana → ${basicDmgFor(h)} dmg)`;
+      btnBasic.style.opacity = h.mana >= myBasicCost ? '1' : '0.4';
+      btnBasic.disabled = h.mana < myBasicCost;
+      btnSpecial.textContent = `Special (${SPECIAL_COST} mana → ${SPECIAL_DMG} dmg)${h.abilityText ? ' — ' + h.abilityText : ''}`;
+      btnSpecial.style.opacity = h.mana >= SPECIAL_COST ? '1' : '0.4';
+      btnSpecial.disabled = h.mana < SPECIAL_COST;
+      modal.style.display = 'flex';
+      return;
+    }
+
+    // Normal character → basic only, no popup
+    selectedHero = h;
+    selectedAttackType = 'basic';
+    heroes.forEach(updateHeroUI);
+    log(`Selected ${h.name}. Tap an enemy on the right.`);
+  } else {
+    // Right side = enemy → only valid as target
+    if (!selectedHero) {
+      log('Select one of YOUR heroes on the left first.');
+      return;
+    }
+    if (!getValidTargets(selectedHero).includes(h)) {
+      if (selectedHero.type === 'melee' && h.type === 'ranged') {
+        log(`${selectedHero.name}'s melee can't reach ${h.name} — an enemy melee unit is guarding that lane.`);
+      } else {
+        log('Not a valid target.');
+      }
+      return;
+    }
+    performAttack(selectedHero, h, selectedAttackType);
+  }
+}
+
+function performAttack(attacker, target, attackType) {
+  if (attacker.dead || target.dead) return;
+
+  let cost, dmg, usedSpecial = false;
+  const targetWasDamaged = target.hp < target.maxHp;
+  const targetWasLowHp = target.hp <= 3;
+
+  if (attackType === 'special') {
+    if (!attacker.isSpecial) { log(`${attacker.name} has no Special attack.`); return; }
+    if (attacker.mana < SPECIAL_COST) {
+      log('Not enough mana for Special.');
+      return;
+    }
+    cost = SPECIAL_COST;
+    dmg = SPECIAL_DMG;
+    usedSpecial = true;
+    // Simple, already-implemented special effects (flat modifiers only —
+    // see characters.js header for what's wired up vs. description-only).
+    if (attacker.simpleAbility === 'divineStrike' && targetWasDamaged) dmg += 1;
+    if (attacker.simpleAbility === 'brutal' && targetWasLowHp) dmg += 1;
+  } else {
+    cost = basicCostFor(attacker);
+    if (attacker.mana < cost) {
+      log('Not enough mana.');
+      return;
+    }
+    dmg = basicDmgFor(attacker);
+  }
+
+  attacker.mana -= cost;
+  target.hp -= dmg;
+  if (target.hp <= 0) {
+    target.hp = 0;
+    target.dead = true;
+    log(`${attacker.name}${usedSpecial ? ' ★' : ''} defeated ${target.name}!`);
+  } else {
+    log(`${attacker.name}${usedSpecial ? ' ★' : ''} hit ${target.name} for ${dmg} (${target.hp} HP left)`);
+  }
+
+  if (attacker.simpleAbility === 'frenzy') {
+    const before = attacker.mana;
+    attacker.mana = Math.min(attacker.maxMana, attacker.mana + 1);
+    if (attacker.mana > before) log(`${attacker.name}'s Frenzy grants +1 mana.`);
+  }
+
+  attacker.actedThisTurn = true;
+  updateHeroUI(attacker);
+  updateHeroUI(target);
+  if (attacker.side === 'player') {
+    selectedHero = null;
+    selectedAttackType = 'basic';
+  }
+  heroes.forEach(updateHeroUI);
+
+  const enemiesAlive = heroes.filter(h => h.side === 'enemy' && !h.dead).length;
+  const playersAlive = heroes.filter(h => h.side === 'player' && !h.dead).length;
+  if (enemiesAlive === 0) {
+    log('🎉 YOU WIN! All enemies defeated.');
+    currentTurn = 'none';
+    updateTurnUI();
+    return;
+  }
+  if (playersAlive === 0) {
+    log('💀 DEFEAT — all your heroes have fallen.');
+    currentTurn = 'none';
+    updateTurnUI();
+    return;
+  }
+
+  checkAutoEndPlayerTurn();
+}
+
+// Once every living player hero is resolved for this turn, automatically
+// hand the turn to the enemy. Player is always the attacker on the left
+// side; enemy only ever acts after the player is done.
+// A hero is "resolved" when: it attacked, OR (special only) it chose Do
+// Nothing, OR it simply can't afford its own Basic Attack cost (normal
+// heroes have no "Do Nothing" and must attack if they're able to).
+function checkAutoEndPlayerTurn() {
+  if (currentTurn !== 'player' || isAnimating) return;
+  if (!swapUsedThisTurn) return; // a turn always includes a swap — can't end before that happens
+  const livingPlayers = heroes.filter(h => h.side === 'player' && !h.dead);
+  if (livingPlayers.length === 0) return;
+  const allResolved = livingPlayers.every(h => {
+    if (h.actedThisTurn) return true;
+    if (h.mana < basicCostFor(h)) return true;
+    return false;
+  });
+  if (allResolved) {
+    log('All your heroes have acted — enemy turn begins.');
+    endPlayerTurn();
+  }
+}
+
+function updateTurnUI() {
+  const el = document.getElementById('turn-indicator');
+  if (!el) return;
+  if (currentTurn === 'player') {
+    el.textContent = swapUsedThisTurn
+      ? 'Your Turn — swap used, attack with anyone who can'
+      : 'Your Turn — swap two tiles, then attack';
+    el.style.color = '#0ff';
+  } else if (currentTurn === 'enemy') {
+    el.textContent = 'Enemy Turn...';
+    el.style.color = '#f55';
+  } else {
+    el.textContent = 'Battle Over';
+    el.style.color = '#ff0';
+  }
+}
+
+function endPlayerTurn() {
+  if (currentTurn !== 'player' || isAnimating) return;
+  selectedHero = null;
+  selectedTile = null;
+  heroes.forEach(updateHeroUI);
+  currentTurn = 'enemy';
+  setBoardLocked(true);
+  updateTurnUI();
+  log('—— Enemy turn ——');
+  setTimeout(enemyTurn, 600);
+}
+
+function enemyTurn() {
+  if (currentTurn !== 'enemy') return;
+
+  // Give a little mana to 1–2 random living enemies (simulates their "match")
+  const livingEnemies = heroes.filter(h => h.side === 'enemy' && !h.dead);
+  if (livingEnemies.length === 0) {
+    currentTurn = 'player';
+    updateTurnUI();
+    return;
+  }
+
+  // Boost 1 or 2 enemies
+  const shuffled = [...livingEnemies].sort(() => Math.random() - 0.5);
+  const toBoost = shuffled.slice(0, Math.min(2, shuffled.length));
+  toBoost.forEach(h => {
+    h.mana = Math.min(h.maxMana, h.mana + 3 + Math.floor(Math.random() * 3));
+    updateHeroUI(h);
+  });
+
+  // Then each enemy that can attack does so once against a valid target
+  const livingPlayers = heroes.filter(h => h.side === 'player' && !h.dead);
+  if (livingPlayers.length === 0) {
+    log('💀 All your units are down.');
+    currentTurn = 'none';
+    updateTurnUI();
+    return;
+  }
+
+  let delay = 400;
+  livingEnemies.forEach(enemy => {
+    if (enemy.mana < basicCostFor(enemy)) return;
+    setTimeout(() => {
+      if (enemy.dead || currentTurn !== 'enemy') return;
+      const targets = getValidTargets(enemy);
+      if (targets.length === 0) return;
+      const target = targets[Math.floor(Math.random() * targets.length)];
+      const useSpecial = enemy.isSpecial && enemy.mana >= SPECIAL_COST;
+      performAttack(enemy, target, useSpecial ? 'special' : 'basic');
+    }, delay);
+    delay += 500;
+  });
+
+  setTimeout(() => {
+    if (currentTurn === 'none') return; // battle already ended mid-turn
+    const playersAlive = heroes.filter(h => h.side === 'player' && !h.dead).length;
+    if (playersAlive === 0) return; // defeat already logged by performAttack
+    currentTurn = 'player';
+    heroes.forEach(h => { h.actedThisTurn = false; });
+    heroes.forEach(updateHeroUI);
+    swapUsedThisTurn = false;
+    setBoardLocked(false);
+    log('—— Your turn ——');
+    updateTurnUI();
+  }, delay + 200);
+}
+
+// ---------- BATTLE START / RESTART / REDEPLOY ----------
+function startBattle() {
+  if (placedCount() === 0) {
+    log('Place at least one hero before starting.');
+    return;
+  }
+  gamePhase = 'battle';
+  setInfoText('battle');
+  document.getElementById('deploy-panel').style.display = 'none';
+  document.getElementById('board-wrap').style.display = 'block';
+  document.getElementById('turn-indicator').style.display = 'block';
+  document.getElementById('battle-controls').style.display = 'flex';
+
+  buildArmies();
+  selectedTile = null;
+  selectedHero = null;
+  selectedAttackType = 'basic';
+  pendingActionHero = null;
+  isAnimating = false;
+  currentTurn = 'player';
+  swapUsedThisTurn = false;
+  setBoardLocked(false);
+  if (modal) modal.style.display = 'none';
+
+  fillBoardNoMatches();
+  renderBoard();
+  renderBattlefield();
+  updateTurnUI();
+
+  const teamList = heroes.filter(h => h.side === 'player').map(h => h.name).join(', ');
+  log(`Battle start! Your team: ${teamList}`);
+}
+
+function restartBattle() {
+  if (heroes.length === 0) { startBattle(); return; }
+  heroes.forEach(h => { h.hp = h.maxHp; h.mana = 0; h.dead = false; h.actedThisTurn = false; });
+  selectedTile = null;
+  selectedHero = null;
+  selectedAttackType = 'basic';
+  pendingActionHero = null;
+  isAnimating = false;
+  currentTurn = 'player';
+  swapUsedThisTurn = false;
+  setBoardLocked(false);
+  if (modal) modal.style.display = 'none';
+  fillBoardNoMatches();
+  renderBoard();
+  renderBattlefield();
+  updateTurnUI();
+  log('Battle restarted — same team, fresh board.');
+}
+
+function goToDeployment() {
+  heroes = [];
+  initDeployment();
+  log('Back to deployment — pick your team.');
+}
+
+document.getElementById('btn-start-battle').onclick = startBattle;
+document.getElementById('btn-restart-battle').onclick = restartBattle;
+document.getElementById('btn-redeploy').onclick = goToDeployment;
+
+// ---------- INIT ----------
+initDeployment();
+</script>
+</body>
+</html>
