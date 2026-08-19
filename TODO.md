@@ -10,9 +10,15 @@ Lock in core combat + resource rules so any AI can safely work on the project.
 
 ## Recently Done (2026-08-19, later) — Deployment: tap +/- badges, drag restricted to mouse
 - [x] **Replaced touch drag-to-place with tap "+"/"−" badges**, per direct instruction. Roster cards now show a green "+" badge (top-right) that auto-places the hero into the next open row from the top (`autoPlaceCharacter()`, ~line 1076: Ranged → first empty of `RANGED_SLOTS`; Melee → first row not already guarded by an aligned Melee). Placed cards show a red "−" badge that removes them. Both work on any input (tap or click).
-- [x] **Drag (initial placement AND repositioning) is now mouse-only** — `startRangedDrag()`/`startMeleeDrag()` bail immediately if `e.pointerType !== 'mouse'`, one choke point covering all 4 drag-start call sites. Kept for precise desktop/testing placement — it's still the only way to get a Melee's half-step boundary position, which "+" can't express. This makes this morning's press-and-hold touch-drag fix (TOUCH_DRAG_HOLD_MS/TOUCH_DRAG_CANCEL_PX) unreachable, so it was removed rather than left as dead code — touch pointerdown on a card now does nothing, so there's no scroll-vs-drag conflict left to solve at all.
+- [x] ~~Drag (initial placement AND repositioning) is now mouse-only~~ — **refined the same day, see below**: this turned out too broad and broke touch repositioning + half-step placement entirely.
 - [x] `.card-color-dot` moved from top-right to top-left to make room for the new top-right `.card-action-btn` ("+"/"−") badge.
 - [x] Updated context/GAME_MECHANICS.md and context/DECISIONS.md.
+
+## Recently Done (2026-08-19, even later) — Mouse-only restriction narrowed to new placements only; badge restyle
+- [x] **Narrowed the mouse-only drag restriction to just NEW placements from the roster** — repositioning an already-placed card now works on any input again. User feedback after testing: dragging a placed card, and reaching Melee's half-step boundary position, both need to work on touch too (only initial roster→battlefield placement needed the mouse-only guard, to avoid the roster-scroll conflict). `startRangedDrag()` now checks `opts.fromSlot == null`, `startMeleeDrag()` checks `opts.meleeIndex == null`, before applying the `pointerType !== 'mouse'` bail — a non-null value (repositioning) skips the check entirely. The battlefield doesn't scroll, so there was never a real conflict to protect against there.
+- [x] **Badge restyle**: `.card-action-btn` ("+"/"−") dropped its circular background/border — now a plain, larger (0.75rem → 1.15rem) colored glyph with a dark text-shadow for legibility against the card's own color gradient, per direct request ("remove the circle, enlarge the icons a little").
+- [x] Updated context/GAME_MECHANICS.md and context/DECISIONS.md again.
+- [ ] Next AI: no known issues. Verified live: touch-drag repositions a placed Melee from aligned to a boundary (coverage tag updates correctly); touch pointerdown on a roster card still does nothing; mouse unaffected either way.
 - [ ] Next AI: no known issues. If picking up Melee boundary placement on touch (currently impossible — mouse-drag only), that's the natural next step here.
 
 

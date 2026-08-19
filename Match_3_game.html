@@ -192,24 +192,24 @@
       border: 1px solid #000;
     }
     /* Tap-to-place / tap-to-remove badge, upper-right corner of a card —
-       the touch-friendly alternative to drag (see DECISIONS.md). Shares one
-       look, colored by whether it adds or removes. */
+       the touch-friendly alternative to drag (see DECISIONS.md). No circle/
+       background — just a bare glyph with a dark outline glow for legibility
+       against the card's own color gradient. */
     .card-action-btn {
       position: absolute;
-      top: 2px; right: 2px;
-      width: 18px; height: 18px;
-      line-height: 16px;
-      border-radius: 50%;
-      background: rgba(0,0,0,0.6);
-      font-size: 0.75rem;
+      top: 0; right: 2px;
+      width: 22px; height: 22px;
+      line-height: 22px;
+      font-size: 1.15rem;
       font-weight: bold;
       text-align: center;
       cursor: pointer;
       z-index: 2;
       user-select: none;
+      text-shadow: 0 0 3px #000, 0 0 3px #000, 0 1px 1px #000;
     }
-    .card-action-btn.add { border: 1px solid #2ecc71; color: #2ecc71; }
-    .card-action-btn.remove { border: 1px solid #e74c3c; color: #e74c3c; }
+    .card-action-btn.add { color: #2ecc71; }
+    .card-action-btn.remove { color: #e74c3c; }
     .mana-bar-bg {
       width: 92%;
       height: 12px;
@@ -1360,7 +1360,11 @@ function rangedSlotEls() {
 // slots — the player picks exactly which one.
 function startRangedDrag(e, opts) {
   if (gamePhase !== 'deploy') return;
-  if (e.pointerType !== 'mouse') return; // touch/pen: use the +/- buttons instead (see DECISIONS.md)
+  // New placement from the roster is mouse-only (use the "+" badge on
+  // touch/pen instead — see DECISIONS.md); repositioning an ALREADY-placed
+  // card works on any input, since the battlefield doesn't scroll and so
+  // has no touch/drag conflict to protect against.
+  if (opts.fromSlot == null && e.pointerType !== 'mouse') return;
   e.preventDefault();
   const cd = charById(opts.charId);
   dragState = { kind: 'ranged', charId: opts.charId, fromSlot: opts.fromSlot, ghostEl: buildGhost(cd, 'ranged'), hoverSlot: null };
@@ -1431,7 +1435,11 @@ function onRangedDragEnd(e) {
 // computed live from wherever the Ranged slots currently are on screen.
 function startMeleeDrag(e, opts) {
   if (gamePhase !== 'deploy') return;
-  if (e.pointerType !== 'mouse') return; // touch/pen: use the +/- buttons instead (see DECISIONS.md)
+  // Same rule as Ranged: new placement from the roster is mouse-only (use
+  // "+" on touch/pen); repositioning an already-placed card works on any
+  // input — this is how touch reaches a half-step boundary position, since
+  // "+" only ever places aligned.
+  if (opts.meleeIndex == null && e.pointerType !== 'mouse') return;
   e.preventDefault();
   const cd = charById(opts.charId);
   dragState = { kind: 'melee', charId: opts.charId, meleeIndex: opts.meleeIndex, ghostEl: buildGhost(cd, 'melee'), previewBand: null };
