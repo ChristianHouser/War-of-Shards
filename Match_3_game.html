@@ -258,6 +258,17 @@
     .card.gained {
       animation: manaFlash 0.6s ease;
     }
+    /* A Hero's mana bar glows once it's completely full (ready for
+       Special) — Heroes only, since normal characters have no Special to
+       build toward. Same gold as .can-act's pulse, for one consistent
+       "this is ready" visual language across the card. */
+    @keyframes manaFullPulse {
+      0%, 100% { box-shadow: 0 0 8px #ffd700aa; }
+      50% { box-shadow: 0 0 16px 3px #ffd700; }
+    }
+    .mana-bar.mana-full {
+      animation: manaFullPulse 1.2s ease-in-out infinite;
+    }
     @keyframes manaFlash {
       0% { box-shadow: 0 0 0 0 #00ffaa; }
       40% { box-shadow: 0 0 20px 6px #00ffaa; transform: scale(1.08); }
@@ -1282,7 +1293,10 @@ function updateHeroUI(h) {
   const hpEl = h.el.querySelector('.hp-text');
   if (hpEl) hpEl.textContent = `${h.hp}/${h.maxHp}`;
   const bar = h.el.querySelector('.mana-bar');
-  if (bar) bar.style.width = `${(h.mana / h.maxMana) * 100}%`;
+  if (bar) {
+    bar.style.width = `${(h.mana / h.maxMana) * 100}%`;
+    bar.classList.toggle('mana-full', h.isSpecial && h.mana >= h.maxMana);
+  }
   const num = h.el.querySelector('.mana-num');
   if (num) num.textContent = `${h.mana}/${h.maxMana}`;
   updateEndTurnButtonState();
@@ -3079,7 +3093,13 @@ function runNextAutoAttack() {
 // Nothing, OR it simply can't afford its own Basic Attack cost (normal
 // heroes have no "Do Nothing" and must attack if they're able to).
 function checkAutoEndPlayerTurn() {
-  updateEndTurnButtonState();
+  // Refresh every hero's card (not just whichever ones the preceding action
+  // directly touched, e.g. grantMana() only updates heroes of the matched
+  // color) — the can-act glow and full-mana glow both depend on state
+  // (swapUsedThisTurn, currentTurn, etc.) that changes independently of
+  // any one hero's own mana/HP, so they'd otherwise go stale for anyone
+  // not directly involved in the triggering action.
+  heroes.forEach(updateHeroUI);
   if (currentTurn !== 'player' || isAnimating) return;
   if (!swapUsedThisTurn) return; // a turn always includes a swap — can't end before that happens
   const livingPlayers = heroes.filter(h => h.side === 'player' && !h.dead);
