@@ -152,6 +152,18 @@
     .card.special.selected {
       box-shadow: 0 0 0 3px #00ffaa, 0 0 14px #c0c0c0;
     }
+    /* "Glowing" = this player hero can act right now (tap it to attack the
+       Logical Target). Distinct gold pulse so it reads as "tap me", not
+       confused with .selected's green glow (which now marks the enemy the
+       player has pre-aimed at, not a lingering "hero picked" state). */
+    @keyframes canActPulse {
+      0%, 100% { box-shadow: 0 0 6px #ffd700aa; }
+      50% { box-shadow: 0 0 14px #ffd700; }
+    }
+    .card.can-act {
+      border-color: #ffd700;
+      animation: canActPulse 1.4s ease-in-out infinite;
+    }
     .card.empty-slot {
       background: #1a1a2e;
       border: 2px dashed #444;
@@ -993,8 +1005,7 @@ function coverageLabel(coverage) {
 let board = [];          // board[y][x] = color string
 let boardSpecial = [];   // boardSpecial[y][x] = null | 'bomb' | 'crystal' (parallel to board)
 let heroes = [];         // live combat heroes (only populated once battle starts)
-let selectedHero = null; // hero object
-let selectedAttackType = 'basic'; // 'basic' | 'special'
+let aimedTarget = null;  // enemy hero the player pre-aimed at (optional) — tap enemy, then a player hero, to use it; consumed on the next attack
 let isAnimating = false;
 let pendingActionHero = null; // hero waiting for modal choice
 let currentTurn = 'player'; // 'player' | 'enemy' | 'none'
@@ -1266,7 +1277,8 @@ function updateHeroUI(h) {
   if (!h.el) return;
   h.el.classList.toggle('dead', h.dead);
   h.el.classList.toggle('acted', h.actedThisTurn && !h.dead);
-  h.el.classList.toggle('selected', selectedHero === h);
+  h.el.classList.toggle('selected', aimedTarget === h);
+  h.el.classList.toggle('can-act', h.side === 'player' && canHeroAct(h));
   const hpEl = h.el.querySelector('.hp-text');
   if (hpEl) hpEl.textContent = `${h.hp}/${h.maxHp}`;
   const bar = h.el.querySelector('.mana-bar');
@@ -2555,8 +2567,8 @@ function onTilePointerDown(e, x, y) {
     log('You already used this turn\'s one board action (swap or crystal tap) — attack with anyone who can, then the turn ends.');
     return;
   }
-  if (selectedHero) {
-    selectedHero = null;
+  if (aimedTarget) {
+    aimedTarget = null;
     heroes.forEach(updateHeroUI);
   }
   if (!board[y][x]) return; // ignore presses on empty tiles
@@ -2688,12 +2700,10 @@ btnBasic.onclick = () => {
     log(`Not enough mana for Basic (need ${cost}).`);
     return;
   }
-  selectedHero = pendingActionHero;
-  selectedAttackType = 'basic';
+  const attacker = pendingActionHero;
   pendingActionHero = null;
   modal.style.display = 'none';
-  heroes.forEach(updateHeroUI);
-  log(`Selected ${selectedHero.name} — BASIC. Tap an enemy.`);
+  resolveAttack(attacker, 'basic');
 };
 
 btnSpecial.onclick = () => {
@@ -2702,12 +2712,10 @@ btnSpecial.onclick = () => {
     log('Not enough mana for Special (need 5).');
     return;
   }
-  selectedHero = pendingActionHero;
-  selectedAttackType = 'special';
+  const attacker = pendingActionHero;
   pendingActionHero = null;
   modal.style.display = 'none';
-  heroes.forEach(updateHeroUI);
-  log(`Selected ${selectedHero.name} — SPECIAL ★. Tap an enemy.`);
+  resolveAttack(attacker, 'special');
 };
 
 btnDoNothing.onclick = () => {
@@ -2715,8 +2723,6 @@ btnDoNothing.onclick = () => {
   const h = pendingActionHero;
   h.actedThisTurn = true;
   pendingActionHero = null;
-  selectedHero = null;
-  selectedAttackType = 'basic';
   modal.style.display = 'none';
   heroes.forEach(updateHeroUI);
   log(`${h.name} does nothing this turn.`);
@@ -2821,24 +2827,73 @@ function getValidTargets(attacker) {
   return [...enemyMelee, ...reachableRanged];
 }
 
+// A hero's "lane" for tie-breaking purposes, unified across both types:
+// Ranged has a real laneIndex; Melee has no lane of its own, so it uses the
+// lane its coverage is primarily anchored to (primaryLane already handles
+// aligned-vs-boundary-vs-none — see its own comment, ~line 995).
+function heroLane(h) {
+  return h.type === 'ranged' ? h.laneIndex : primaryLane(h.coverage);
+}
+
+// Whether a living player hero could act right now if tapped — same set of
+// checks onHeroClick's attacker branch runs, kept in sync here purely for
+// the "glowing" can-act visual cue (updateHeroUI), not for gating itself.
+function canHeroAct(h) {
+  return gamePhase === 'battle' && currentTurn === 'player' && !isAnimating &&
+    h.side === 'player' && !h.dead && !h.actedThisTurn &&
+    swapUsedThisTurn && h.mana >= basicCostFor(h);
+}
+
+// Logical Targeting: the default target when the player doesn't pre-aim.
+// Ranked among only the legal targets (getValidTargets already encodes the
+// melee-vs-guarded-ranged rule — this never considers raw pixel/visual
+// distance) by:
+//   1. Highest current mana — SPECIAL_COST is the same flat threshold for
+//      every character, so raw mana directly ranks "closest to Special".
+//   2. Then lowest HP — finish off the weakest.
+//   3. Then nearest lane to the attacker's own.
+function pickLogicalTarget(attacker) {
+  const targets = getValidTargets(attacker);
+  if (targets.length === 0) return null;
+  const attackerLane = heroLane(attacker);
+  return targets.slice().sort((a, b) => {
+    if (b.mana !== a.mana) return b.mana - a.mana;
+    if (a.hp !== b.hp) return a.hp - b.hp;
+    return Math.abs(heroLane(a) - attackerLane) - Math.abs(heroLane(b) - attackerLane);
+  })[0];
+}
+
+// Resolves an attack once the attacker + attack type are decided (either
+// immediately, for a normal character's one-tap attack, or after the
+// player's modal choice for a Hero). Uses the player's pre-aimed target if
+// they set one (tap an enemy, then a hero) and it's still legal for this
+// specific attacker; otherwise falls back to the Logical Target. Aim is
+// single-use — cleared here regardless of which path was taken.
+function resolveAttack(attacker, attackType) {
+  let target = null;
+  if (aimedTarget && !aimedTarget.dead && getValidTargets(attacker).includes(aimedTarget)) {
+    target = aimedTarget;
+  } else {
+    target = pickLogicalTarget(attacker);
+  }
+  aimedTarget = null;
+  heroes.forEach(updateHeroUI);
+  if (!target) {
+    log(`${attacker.name} has no valid target to attack.`);
+    return;
+  }
+  performAttack(attacker, target, attackType);
+}
+
 function onHeroClick(h) {
   if (gamePhase !== 'battle' || isAnimating || h.dead || currentTurn !== 'player') return;
 
-  // Only left side (player) can be selected as attacker
+  // Only left side (player) can be an attacker
   if (h.side === 'player') {
     if (!swapUsedThisTurn) {
       log('Swap two tiles first — attacks come after your swap.');
       return;
     }
-    // Deselect if clicking the same one again
-    if (selectedHero === h) {
-      selectedHero = null;
-      selectedAttackType = 'basic';
-      updateHeroUI(h);
-      log('Deselected.');
-      return;
-    }
-
     if (h.actedThisTurn) {
       log(`${h.name} already acted this turn.`);
       return;
@@ -2852,7 +2907,7 @@ function onHeroClick(h) {
 
     // Only heroes with multiple attack choices (specials) get the action
     // popup with a "Do Nothing" option. Normal heroes have just one option
-    // (Basic Attack), so they select directly and must use it if they can.
+    // (Basic Attack), so tapping them attacks immediately.
     if (h.isSpecial) {
       pendingActionHero = h;
       modalTitle.textContent = `${h.name} ★${h.abilityName ? ' — ' + h.abilityName : ''} (mana: ${h.mana}/${h.maxMana})`;
@@ -2866,26 +2921,21 @@ function onHeroClick(h) {
       return;
     }
 
-    // Normal character → basic only, no popup
-    selectedHero = h;
-    selectedAttackType = 'basic';
-    heroes.forEach(updateHeroUI);
-    log(`Selected ${h.name}. Tap an enemy on the right.`);
+    // Normal character → immediate Basic attack: no popup, no second tap
+    // on an enemy needed. Uses the pre-aimed target if one was set (tap an
+    // enemy first), else the Logical Target.
+    resolveAttack(h, 'basic');
   } else {
-    // Right side = enemy → only valid as target
-    if (!selectedHero) {
-      log('Select one of YOUR heroes on the left first.');
-      return;
+    // Right side = enemy → optional pre-aim, never itself an attack. Tap
+    // the already-aimed enemy again to clear it. A subsequent tap on a
+    // player hero (direct, or via the modal's Basic/Special choice) is
+    // what actually attacks — see resolveAttack.
+    if (aimedTarget === h) {
+      aimedTarget = null;
+    } else {
+      aimedTarget = h;
     }
-    if (!getValidTargets(selectedHero).includes(h)) {
-      if (selectedHero.type === 'melee' && h.type === 'ranged') {
-        log(`${selectedHero.name}'s melee can't reach ${h.name} — an enemy melee unit is guarding that lane.`);
-      } else {
-        log('Not a valid target.');
-      }
-      return;
-    }
-    performAttack(selectedHero, h, selectedAttackType);
+    heroes.forEach(updateHeroUI);
   }
 }
 
@@ -2937,10 +2987,6 @@ function performAttack(attacker, target, attackType) {
   attacker.actedThisTurn = true;
   updateHeroUI(attacker);
   updateHeroUI(target);
-  if (attacker.side === 'player') {
-    selectedHero = null;
-    selectedAttackType = 'basic';
-  }
   heroes.forEach(updateHeroUI);
 
   const enemiesAlive = heroes.filter(h => h.side === 'enemy' && !h.dead).length;
@@ -3071,7 +3117,7 @@ function updateTurnUI() {
 
 function endPlayerTurn() {
   if (currentTurn !== 'player' || isAnimating) return;
-  selectedHero = null;
+  aimedTarget = null;
   endTileDrag();
   cancelAutoAttack();
   heroes.forEach(updateHeroUI);
@@ -3158,8 +3204,7 @@ function startBattle() {
   buildArmies();
   endTileDrag();
   cancelAutoAttack();
-  selectedHero = null;
-  selectedAttackType = 'basic';
+  aimedTarget = null;
   pendingActionHero = null;
   isAnimating = false;
   currentTurn = 'player';
@@ -3181,8 +3226,7 @@ function restartBattle() {
   heroes.forEach(h => { h.hp = h.maxHp; h.mana = 0; h.dead = false; h.actedThisTurn = false; });
   endTileDrag();
   cancelAutoAttack();
-  selectedHero = null;
-  selectedAttackType = 'basic';
+  aimedTarget = null;
   pendingActionHero = null;
   isAnimating = false;
   currentTurn = 'player';
