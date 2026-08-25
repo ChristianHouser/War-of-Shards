@@ -2081,14 +2081,14 @@ function fillBoardNoMatches() {
   createEmptyBoard();
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      // Every earlier cell is already known match-free on its own, so a
-      // violation from placing this one can only involve (x,y) itself —
-      // flood-filling from here is enough to catch it, straight run or blob.
       let c;
       do {
         c = randomColor();
-        board[y][x] = c;
-      } while (floodFillSameColor(x, y, Array.from({length: ROWS}, () => Array(COLS).fill(false))).length >= 3);
+      } while (
+        (x >= 2 && board[y][x-1] === c && board[y][x-2] === c) ||
+        (y >= 2 && board[y-1][x] === c && board[y-2][x] === c)
+      );
+      board[y][x] = c;
     }
   }
 }
@@ -2119,75 +2119,128 @@ function getTileEl(x, y) {
   return boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
 }
 
-// The single connectivity primitive behind all match detection: flood-fills
-// every tile orthogonally reachable from (x,y) that shares its color ("one
-// of the main sides touching another of the same color"). A group's shape
-// never matters, only its size — a bent 3-tile blob matches exactly like a
-// straight run of 3, same as Empires & Puzzles-style connected matching.
-// `visited` is shared across a scan so each cell is only ever flood-filled
-// once (see findMatchGroups); pass a fresh all-false grid for a standalone
-// check (see fillBoardNoMatches).
-function floodFillSameColor(x, y, visited) {
-  const color = board[y][x];
-  const cells = [];
-  const queue = [{x, y}];
-  visited[y][x] = true;
-  while (queue.length) {
-    const cur = queue.shift();
-    cells.push(cur);
-    [{x: cur.x + 1, y: cur.y}, {x: cur.x - 1, y: cur.y}, {x: cur.x, y: cur.y + 1}, {x: cur.x, y: cur.y - 1}].forEach(n => {
-      if (n.x < 0 || n.x >= COLS || n.y < 0 || n.y >= ROWS) return;
-      if (visited[n.y][n.x]) return;
-      if (board[n.y][n.x] !== color) return;
-      visited[n.y][n.x] = true;
-      queue.push(n);
-    });
+// Cheap existence check ("did this swap create/leave any match on the
+// board?") — used by attemptTileSwap and the cascade-continuation check. Kept
+// separate from findMatchGroups() (which does the more expensive connected-
+// component/shape work) since most calls here only need a yes/no answer.
+function findMatchedCells() {
+  const matched = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+
+  // Horizontal
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const color = board[y][x];
+      if (!color) { x++; continue; }
+      let len = 1;
+      while (x + len < COLS && board[y][x + len] === color) len++;
+      if (len >= 3) {
+        for (let i = 0; i < len; i++) matched[y][x + i] = true;
+      }
+      x += len;
+    }
   }
-  return cells;
+
+  // Vertical
+  for (let x = 0; x < COLS; x++) {
+    let y = 0;
+    while (y < ROWS) {
+      const color = board[y][x];
+      if (!color) { y++; continue; }
+      let len = 1;
+      while (y + len < ROWS && board[y + len][x] === color) len++;
+      if (len >= 3) {
+        for (let i = 0; i < len; i++) matched[y + i][x] = true;
+      }
+      y += len;
+    }
+  }
+
+  const cells = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (matched[y][x]) cells.push({x, y});
+    }
+  }
+  return {cells, hasMatches: cells.length > 0};
 }
 
-// Full match analysis for resolution: every connected same-color group of
-// 3+ tiles found via floodFillSameColor is a match, regardless of shape.
+// Full match analysis for resolution: groups matched cells into same-color
+// orthogonally-connected components (this is what makes an intersecting
+// horizontal-3 + vertical-3 register as ONE 5-cell T/L/plus group instead
+// of two separate 3-groups), and records, per group, whether it has an
+// "intersection" cell (part of both a horizontal AND vertical run) — used
+// to place a newly-spawned special tile at the natural crossing point.
 function findMatchGroups() {
+  const hMatched = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+  const vMatched = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const color = board[y][x];
+      if (!color) { x++; continue; }
+      let len = 1;
+      while (x + len < COLS && board[y][x + len] === color) len++;
+      if (len >= 3) for (let i = 0; i < len; i++) hMatched[y][x + i] = true;
+      x += len;
+    }
+  }
+  for (let x = 0; x < COLS; x++) {
+    let y = 0;
+    while (y < ROWS) {
+      const color = board[y][x];
+      if (!color) { y++; continue; }
+      let len = 1;
+      while (y + len < ROWS && board[y + len][x] === color) len++;
+      if (len >= 3) for (let i = 0; i < len; i++) vMatched[y + i][x] = true;
+      y += len;
+    }
+  }
+
   const visited = Array.from({length: ROWS}, () => Array(COLS).fill(false));
   const groups = [];
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      if (visited[y][x] || !board[y][x]) continue;
-      const cells = floodFillSameColor(x, y, visited);
-      if (cells.length >= 3) groups.push({color: board[y][x], cells});
+      const isMatched = hMatched[y][x] || vMatched[y][x];
+      if (!isMatched || visited[y][x]) continue;
+      const color = board[y][x];
+      const cells = [];
+      const queue = [{x, y}];
+      visited[y][x] = true;
+      while (queue.length) {
+        const cur = queue.shift();
+        cells.push(cur);
+        [{x: cur.x + 1, y: cur.y}, {x: cur.x - 1, y: cur.y}, {x: cur.x, y: cur.y + 1}, {x: cur.x, y: cur.y - 1}].forEach(n => {
+          if (n.x < 0 || n.x >= COLS || n.y < 0 || n.y >= ROWS) return;
+          if (visited[n.y][n.x]) return;
+          if (!(hMatched[n.y][n.x] || vMatched[n.y][n.x])) return;
+          if (board[n.y][n.x] !== color) return;
+          visited[n.y][n.x] = true;
+          queue.push(n);
+        });
+      }
+      const intersection = cells.find(c => hMatched[c.y][c.x] && vMatched[c.y][c.x]) || null;
+      groups.push({color, cells, intersection});
     }
   }
   return groups;
 }
 
-// Cheap existence check ("did this swap create/leave any match on the
-// board?") — used by attemptTileSwap and the cascade-continuation check.
-// Just flattens findMatchGroups() rather than re-deriving connectivity,
-// since the board is tiny enough that there's no real cost to sharing it.
-function findMatchedCells() {
-  const groups = findMatchGroups();
-  return {cells: groups.flatMap(g => g.cells), hasMatches: groups.length > 0};
-}
-
 // Chooses where a newly-spawned special tile (Arcane Bomb / Runic Crystal)
 // appears within its group: the cell the player just swapped into place if
 // it's part of this group (feels natural — the tile you moved is the one
-// that "becomes" the bomb/crystal), else the cell closest to the group's
-// centroid — a shape-agnostic stand-in for "the natural middle," since a
-// blob match no longer guarantees a straight run or clean intersection.
+// that "becomes" the bomb/crystal), else the group's intersection cell for
+// a T/L/plus shape, else the middle cell of a straight run.
 function pickSpawnCell(group, swapHintCells) {
   if (swapHintCells) {
     const hit = group.cells.find(c => swapHintCells.some(s => s.x === c.x && s.y === c.y));
     if (hit) return hit;
   }
-  const avgX = group.cells.reduce((sum, c) => sum + c.x, 0) / group.cells.length;
-  const avgY = group.cells.reduce((sum, c) => sum + c.y, 0) / group.cells.length;
-  return group.cells.reduce((best, c) => {
-    const d = (c.x - avgX) ** 2 + (c.y - avgY) ** 2;
-    const bd = (best.x - avgX) ** 2 + (best.y - avgY) ** 2;
-    return d < bd ? c : best;
-  });
+  if (group.intersection) return group.intersection;
+  const sameRow = new Set(group.cells.map(c => c.y)).size === 1;
+  const sorted = group.cells.slice().sort((a, b) => sameRow ? a.x - b.x : a.y - b.y);
+  return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
 function applyGravityAndFill() {
