@@ -2272,6 +2272,35 @@ const shardLayer = document.createElement('div');
 shardLayer.id = 'shard-layer';
 document.body.appendChild(shardLayer);
 
+// Shared particle-flight primitive: spawns `count` small glittering "shards"
+// at (startX,startY) that drift to (endX,endY) with a slight per-shard
+// stagger, fading/shrinking on arrival, then remove themselves. Used by both
+// spawnManaShards (player, tile → mana bar) and spawnEnemyManaShards (enemy,
+// off-screen above → mana bar).
+function flyManaShards(startX, startY, endX, endY, hex, count = 3) {
+  for (let i = 0; i < count; i++) {
+    const shard = document.createElement('div');
+    shard.className = 'mana-shard';
+    shard.style.background = hex;
+    shard.style.color = hex;
+    const jitterX = (Math.random() - 0.5) * 16;
+    const jitterY = (Math.random() - 0.5) * 16;
+    shard.style.left = `${startX + jitterX - 3.5}px`;
+    shard.style.top = `${startY + jitterY - 3.5}px`;
+    shard.style.opacity = '1';
+    shardLayer.appendChild(shard);
+    void shard.offsetWidth; // force the start position to paint before animating
+    const delay = i * 45;
+    setTimeout(() => {
+      shard.style.left = `${endX - 3.5}px`;
+      shard.style.top = `${endY - 3.5}px`;
+      shard.style.opacity = '0.2';
+      shard.style.transform = 'rotate(200deg) scale(0.5)';
+    }, delay);
+    setTimeout(() => shard.remove(), delay + 550);
+  }
+}
+
 // Purely a visual flourish, fire-and-forget: spawns a few small glittering
 // "shards" that fly from a just-cleared tile's position to the mana bar of
 // every living player hero of that color. Never gates or delays any game
@@ -2285,37 +2314,29 @@ function spawnManaShards(x, y, color) {
   const tileRect = tileEl.getBoundingClientRect();
   const startX = tileRect.left + tileRect.width / 2;
   const startY = tileRect.top + tileRect.height / 2;
+  const hex = COLOR_HEX[color] || color;
 
   heroes.filter(h => h.side === 'player' && !h.dead && h.color === color && h.el).forEach(hero => {
     const bar = hero.el.querySelector('.mana-bar-bg');
     if (!bar) return;
     const barRect = bar.getBoundingClientRect();
-    const endX = barRect.left + barRect.width / 2;
-    const endY = barRect.top + barRect.height / 2;
-    const hex = COLOR_HEX[color] || color;
-
-    for (let i = 0; i < 3; i++) {
-      const shard = document.createElement('div');
-      shard.className = 'mana-shard';
-      shard.style.background = hex;
-      shard.style.color = hex;
-      const jitterX = (Math.random() - 0.5) * 16;
-      const jitterY = (Math.random() - 0.5) * 16;
-      shard.style.left = `${startX + jitterX - 3.5}px`;
-      shard.style.top = `${startY + jitterY - 3.5}px`;
-      shard.style.opacity = '1';
-      shardLayer.appendChild(shard);
-      void shard.offsetWidth; // force the start position to paint before animating
-      const delay = i * 45;
-      setTimeout(() => {
-        shard.style.left = `${endX - 3.5}px`;
-        shard.style.top = `${endY - 3.5}px`;
-        shard.style.opacity = '0.2';
-        shard.style.transform = 'rotate(200deg) scale(0.5)';
-      }, delay);
-      setTimeout(() => shard.remove(), delay + 550);
-    }
+    flyManaShards(startX, startY, barRect.left + barRect.width / 2, barRect.top + barRect.height / 2, hex);
   });
+}
+
+// The enemy has no visible match-3 board of their own to clear tiles from —
+// their mana gain is a simulated "their match" boost — so per design the
+// shards instead fall from just off-screen above the viewport, as if the
+// enemy's own board is hidden up there, landing in that hero's mana bar.
+function spawnEnemyManaShards(hero) {
+  if (!hero.el) return;
+  const bar = hero.el.querySelector('.mana-bar-bg');
+  if (!bar) return;
+  const barRect = bar.getBoundingClientRect();
+  const endX = barRect.left + barRect.width / 2;
+  const endY = barRect.top + barRect.height / 2;
+  const hex = COLOR_HEX[hero.color] || hero.color;
+  flyManaShards(endX, -20, endX, endY, hex);
 }
 
 // Grants 1 mana per tile to every living player hero of `color` — the base
@@ -3290,8 +3311,13 @@ function endPlayerTurn() {
   setBoardLocked(true);
   updateTurnUI();
   log('—— Enemy turn ——');
-  setTimeout(enemyTurn, 600);
+  setTimeout(enemyTurn, ENEMY_TURN_START_DELAY_MS);
 }
+
+// A short beat between "Enemy Turn..." appearing and the enemy actually
+// acting, so the turn handoff reads as a deliberate pause rather than an
+// instant cut — direct request ("give a slight pause before the enemy goes").
+const ENEMY_TURN_START_DELAY_MS = 900;
 
 function enemyTurn() {
   if (currentTurn !== 'enemy') return;
@@ -3310,6 +3336,7 @@ function enemyTurn() {
   toBoost.forEach(h => {
     h.mana = Math.min(h.maxMana, h.mana + 3 + Math.floor(Math.random() * 3));
     updateHeroUI(h);
+    spawnEnemyManaShards(h);
   });
 
   // Then each enemy that can attack does so once against a valid target
@@ -3321,7 +3348,9 @@ function enemyTurn() {
     return;
   }
 
-  let delay = 400;
+  // Starts after the mana shards' flight (~700ms including their stagger)
+  // so the boosted hero's mana visibly arrives before anyone attacks.
+  let delay = 700;
   livingEnemies.forEach(enemy => {
     if (enemy.mana < basicCostFor(enemy)) return;
     setTimeout(() => {
