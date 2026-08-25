@@ -643,12 +643,68 @@
        then Filter alone on the row below. */
     #placement-controls {
       width: 100%;
-      max-width: 220px;
+      max-width: 300px; /* widened from 220px to fit the new info bubble trigger without the row overflowing/centering-shifting */
       margin: 6px auto 0;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
+      position: relative; /* anchors #formation-info-bubble, which pops out to its left */
+    }
+    #btn-formation-info {
+      background: #0f3460;
+      color: #ffd700;
+      border: 2px solid #ffd700;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      min-width: 20px;
+      flex-shrink: 0;
+      font-size: 0.65rem;
+      font-weight: bold;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #btn-formation-info:active { background: #1a4a80; }
+    /* Speech-bubble tooltip, hidden by default, toggled by #btn-formation-info.
+       Pops out just left of the info button per direct request — a small
+       triangular tail on its right edge points back at the button that
+       opened it. `position:fixed` with JS-computed left/top (see
+       positionFormationInfoBubble()) rather than a plain CSS anchor, since
+       the info button sits close enough to the page's left edge that a
+       fixed 168px-wide bubble anchored purely via `right:100%` would run
+       off-screen — JS clamps it to stay on-screen instead. */
+    #formation-info-bubble {
+      display: none;
+      position: fixed;
+      transform: translateY(-50%);
+      width: 168px;
+      background: #12122a;
+      border: 1px solid #ffd700;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 0.62rem;
+      line-height: 1.45;
+      color: #ddd;
+      text-align: left;
+      z-index: 50;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    }
+    #formation-info-bubble.open { display: block; }
+    #formation-info-bubble div { margin-bottom: 4px; }
+    #formation-info-bubble div:last-child { margin-bottom: 0; }
+    #formation-info-bubble::after {
+      content: '';
+      position: absolute;
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 6px solid transparent;
+      border-left-color: #ffd700;
     }
     #filter-toggle-wrap {
       width: 100%;
@@ -672,8 +728,6 @@
     }
     #btn-formation:active, #btn-filter-toggle:active, #btn-character-codex:active { background: #1a4a80; }
     #btn-filter-toggle.open { background: #ffd700; color: #1a1a2e; }
-    .formation-text { text-align: left; font-size: 0.78rem; line-height: 1.55; color: #ddd; margin-bottom: 12px; }
-    .formation-text div { margin-bottom: 4px; }
     #formation-carousel {
       position: relative;
       overflow: hidden;
@@ -690,11 +744,28 @@
       flex: 0 0 100%;
       width: 100%;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 8px 0;
+      padding: 10px 4px 8px;
       box-sizing: border-box;
     }
+    .formation-slide-title { font-weight: bold; color: #ffd700; font-size: 0.8rem; margin-bottom: 2px; }
+    .formation-slide-blurb { font-size: 0.62rem; color: #bbb; margin-bottom: 4px; padding: 0 10px; line-height: 1.4; }
+    #btn-formation-apply {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 9px;
+      background: #ffd700;
+      color: #1a1a2e;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #btn-formation-apply:active { background: #e0c000; }
     .formation-nav {
       position: absolute;
       top: 50%;
@@ -733,16 +804,27 @@
 
   <div id="battlefield"></div>
 
-  <!-- Formation button + deployed count + Character Codex link: sit just
+  <!-- Formation(s) button + deployed count + Character Codex link: sit just
        outside/underneath the placement box (not overlapping its cards).
        Deployment-only, shown by initDeployment() and hidden by
        startBattle() — static elements rather than something
        renderDeployBattlefield() rebuilds each time, since (unlike the
        cards) they never need to change. Character Codex used to be a
        permanent top-of-page link on both screens; it's deployment-only
-       now (folded into this same show/hide toggle) per direct request. -->
+       now (folded into this same show/hide toggle) per direct request.
+       The little "ℹ" info button sits just left of Formations and toggles
+       a speech-bubble tooltip (also just left of it) holding the coverage
+       explainer that used to live inside the Formation popup itself — that
+       popup is now a swipeable preset picker instead (see formation-modal
+       below), so the explainer moved out to here per direct request. -->
   <div id="placement-controls" style="display:none;">
-    <button id="btn-formation">🛡 Formation</button>
+    <button id="btn-formation-info" title="How melee coverage works">ℹ</button>
+    <div id="formation-info-bubble">
+      <div>• Melee can stand in front of and block attacks.</div>
+      <div>• Ranged units can stand behind them.</div>
+      <div>• Melee can straddle in front of two ranged units and cover both.</div>
+    </div>
+    <button id="btn-formation">🛡 Formations</button>
     <div id="deploy-status"></div>
     <a id="btn-character-codex" href="Roster.html">☰ Codex</a>
   </div>
@@ -810,84 +892,24 @@
     </div>
   </div>
 
-  <!-- Formation Explainer Modal (opened from the Formation button on the
-       deployment/placement screen — see renderDeployBattlefield). One
-       static page of text, plus a 3-slide swipeable image carousel below
-       it illustrating each line. -->
+  <!-- Formation Presets Modal (opened from the Formations button on the
+       deployment/placement screen — see renderDeployBattlefield). Used to
+       be a static explainer (moved to #formation-info-bubble above); now a
+       swipeable picker of ready-made unit-placement layouts, each shown as
+       one slide with a name, a one-line tactical blurb, and a mini diagram
+       — built at script-init time from FORMATION_PRESETS, not hardcoded
+       here, so #formation-track/#formation-dots start empty. -->
   <div id="formation-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
     <div style="background:#1e1e3f; border:2px solid #ffd700; border-radius:12px; padding:16px; max-width:320px; width:90%; text-align:center; position:relative;">
       <button id="btn-formation-close" style="position:absolute; top:6px; right:8px; background:transparent; border:none; color:#aaa; font-size:1.1rem; padding:4px 6px; cursor:pointer;">✕</button>
-      <div style="font-weight:bold; margin-bottom:10px; color:#ffd700; font-size:0.9rem;">🛡 Formation</div>
-      <div class="formation-text">
-        <div>• Melee can stand in front of and block attacks.</div>
-        <div>• Ranged units can stand behind them.</div>
-        <div>• Melee can straddle in front of two ranged units and cover both.</div>
-      </div>
+      <div style="font-weight:bold; margin-bottom:10px; color:#ffd700; font-size:0.9rem;">🛡 Choose a Formation</div>
       <div id="formation-carousel">
         <button id="formation-prev" class="formation-nav">‹</button>
         <button id="formation-next" class="formation-nav">›</button>
-        <div id="formation-track">
-          <div class="formation-slide">
-            <svg viewBox="0 0 220 120" width="200" height="109" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <marker id="fa1" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#f5576c"/>
-                </marker>
-              </defs>
-              <text x="206" y="42" font-size="9" fill="#f5576c" text-anchor="end">ENEMY</text>
-              <line x1="206" y1="58" x2="150" y2="58" stroke="#f5576c" stroke-width="3" marker-end="url(#fa1)"/>
-              <rect x="95" y="38" width="52" height="42" rx="8" fill="#3a2a12" stroke="#ffd700" stroke-width="2"/>
-              <text x="121" y="65" font-size="20" text-anchor="middle">⚔️</text>
-              <text x="150" y="65" font-size="16" text-anchor="middle">🛡</text>
-              <text x="121" y="98" font-size="9" fill="#ffd700" text-anchor="middle">Melee blocks</text>
-            </svg>
-          </div>
-          <div class="formation-slide">
-            <svg viewBox="0 0 220 120" width="200" height="109" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <marker id="fa2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#f5576c"/>
-                </marker>
-              </defs>
-              <text x="206" y="42" font-size="9" fill="#f5576c" text-anchor="end">ENEMY</text>
-              <line x1="206" y1="58" x2="150" y2="58" stroke="#f5576c" stroke-width="3" marker-end="url(#fa2)"/>
-              <rect x="97" y="38" width="46" height="42" rx="8" fill="#3a2a12" stroke="#ffd700" stroke-width="2"/>
-              <text x="120" y="65" font-size="18" text-anchor="middle">⚔️</text>
-              <rect x="28" y="38" width="46" height="42" rx="8" fill="#12304a" stroke="#4facfe" stroke-width="2"/>
-              <text x="51" y="65" font-size="18" text-anchor="middle">🏹</text>
-              <text x="150" y="65" font-size="14" text-anchor="middle">🛡</text>
-              <text x="51" y="98" font-size="9" fill="#4facfe" text-anchor="middle">Ranged safe</text>
-              <text x="120" y="98" font-size="9" fill="#ffd700" text-anchor="middle">Melee front</text>
-            </svg>
-          </div>
-          <div class="formation-slide">
-            <svg viewBox="0 0 220 120" width="200" height="109" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <marker id="fa3a" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#f5576c"/>
-                </marker>
-                <marker id="fa3b" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#f5576c"/>
-                </marker>
-              </defs>
-              <rect x="18" y="10" width="46" height="36" rx="8" fill="#12304a" stroke="#4facfe" stroke-width="2"/>
-              <text x="41" y="33" font-size="16" text-anchor="middle">🏹</text>
-              <rect x="18" y="66" width="46" height="36" rx="8" fill="#12304a" stroke="#4facfe" stroke-width="2"/>
-              <text x="41" y="89" font-size="16" text-anchor="middle">🏹</text>
-              <rect x="93" y="38" width="50" height="42" rx="8" fill="#3a2a12" stroke="#ffd700" stroke-width="2"/>
-              <text x="118" y="65" font-size="20" text-anchor="middle">⚔️</text>
-              <line x1="206" y1="28" x2="148" y2="52" stroke="#f5576c" stroke-width="2.5" marker-end="url(#fa3a)"/>
-              <line x1="206" y1="92" x2="148" y2="68" stroke="#f5576c" stroke-width="2.5" marker-end="url(#fa3b)"/>
-              <text x="118" y="105" font-size="9" fill="#ffd700" text-anchor="middle">1 Melee guards both</text>
-            </svg>
-          </div>
-        </div>
+        <div id="formation-track"></div>
       </div>
-      <div id="formation-dots">
-        <span class="formation-dot" data-i="0"></span>
-        <span class="formation-dot" data-i="1"></span>
-        <span class="formation-dot" data-i="2"></span>
-      </div>
+      <div id="formation-dots"></div>
+      <button id="btn-formation-apply">Apply This Formation</button>
     </div>
   </div>
 
@@ -978,6 +1000,61 @@ const ENEMY_FORMATIONS = [
       { type: 'boundary', lanes: [0, 1] },
       { type: 'boundary', lanes: [1, 2] }
     ]
+  }
+];
+
+// Six practical, ready-made unit-placement layouts for the PLAYER's own
+// Ranged/Melee columns, offered from the Formations button on the
+// deployment screen (see applyFormationPreset() below). Unlike
+// ENEMY_FORMATIONS above, these use real RANGED_SLOTS row indices (0..4,
+// the player's actual fixed grid) and every melee band here is verified
+// bandsConflict()-safe — the enemy's simpler "lane" formations above don't
+// need that check since the enemy is rendered as a plain list, not
+// pixel-aligned to real overlapping rows the way the player's is. Each
+// entry deliberately showcases a different practical use of the
+// aligned/boundary staggered-coverage mechanic (see GAME_MECHANICS.md).
+const FORMATION_PRESETS = [
+  {
+    name: 'Twin Wall',
+    blurb: 'Two staggered guards lock down three ranged lanes — maximum coverage per melee.',
+    ranged: [0, 1, 2],
+    melee: [{ type: 'boundary', indices: [0, 1] }, { type: 'boundary', indices: [1, 2] }]
+  },
+  {
+    name: 'Spearhead',
+    blurb: 'One protected striker behind a wall of four blades.',
+    ranged: [2],
+    melee: [
+      { type: 'aligned', index: 0 }, { type: 'aligned', index: 1 },
+      { type: 'aligned', index: 2 }, { type: 'aligned', index: 3 }
+    ]
+  },
+  {
+    name: 'Checkerboard',
+    blurb: 'Spread ranged lanes, partial cover — one flank is left exposed.',
+    ranged: [0, 2, 4],
+    melee: [{ type: 'aligned', index: 0 }, { type: 'aligned', index: 2 }]
+  },
+  {
+    name: 'Bottleneck',
+    blurb: 'A wide ranged line funnels through a single choke point.',
+    ranged: [0, 1, 2, 3],
+    melee: [{ type: 'boundary', indices: [1, 2] }]
+  },
+  {
+    name: 'Vanguard Brawl',
+    blurb: 'One guard locks down the back line; extra blades push the front.',
+    ranged: [1, 2],
+    melee: [
+      { type: 'boundary', indices: [1, 2] },
+      { type: 'aligned', index: 3 }, { type: 'aligned', index: 4 }
+    ]
+  },
+  {
+    name: 'Solo Guard',
+    blurb: 'The simplest pair: one protector, one protected — a foundation to build on.',
+    ranged: [2],
+    melee: [{ type: 'aligned', index: 2 }]
   }
 ];
 
@@ -2520,13 +2597,119 @@ function applyCrystalEffect(item, choice, toClear, explosionQueue, queuedKeys, l
   }
 }
 
-// ---------- FORMATION EXPLAINER (deployment/placement screen only) ----------
+// ---------- FORMATION INFO BUBBLE (deployment/placement screen only) ----------
+// The old Formation-button popup's explainer text now lives here instead —
+// a small speech-bubble tooltip just left of the info button (which itself
+// sits just left of the Formations button), toggled open/closed rather than
+// a modal, since it's a quick reference rather than something requiring the
+// user's full attention. Closes on a second tap of the info button, or a
+// tap anywhere else on the page.
+const formationInfoBtn = document.getElementById('btn-formation-info');
+const formationInfoBubble = document.getElementById('formation-info-bubble');
+
+// Positions the (position:fixed) bubble just left of the info button, then
+// clamps it so it never runs off the left edge of the viewport — the button
+// sits close enough to the page's left margin on this layout that a plain
+// CSS `right:100%` anchor would push the bubble partly off-screen.
+const FORMATION_INFO_BUBBLE_WIDTH = 168; // must match its CSS width — read from a fixed constant
+                                          // rather than offsetWidth, since offsetWidth would read 0
+                                          // while the bubble is still display:none at open time
+function positionFormationInfoBubble() {
+  const btnRect = formationInfoBtn.getBoundingClientRect();
+  const left = Math.max(8, btnRect.left - FORMATION_INFO_BUBBLE_WIDTH - 10);
+  formationInfoBubble.style.left = `${left}px`;
+  formationInfoBubble.style.top = `${btnRect.top + btnRect.height / 2}px`;
+}
+
+formationInfoBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const opening = !formationInfoBubble.classList.contains('open');
+  if (opening) positionFormationInfoBubble();
+  formationInfoBubble.classList.toggle('open');
+});
+document.addEventListener('click', (e) => {
+  if (formationInfoBubble.classList.contains('open') && !formationInfoBubble.contains(e.target) && e.target !== formationInfoBtn) {
+    formationInfoBubble.classList.remove('open');
+  }
+});
+
+// ---------- FORMATION PRESETS (deployment/placement screen only) ----------
+// The Formations button now opens a swipeable picker of ready-made
+// unit-placement layouts (FORMATION_PRESETS) instead of the old static
+// explainer. Slides are built here from that data rather than hardcoded in
+// the HTML, since there are six of them and each needs its own diagram.
 const formationModal = document.getElementById('formation-modal');
 const formationTrack = document.getElementById('formation-track');
-const formationDots = [...document.querySelectorAll('.formation-dot')];
-const FORMATION_SLIDE_COUNT = formationDots.length;
+const formationDotsEl = document.getElementById('formation-dots');
+const FORMATION_SLIDE_COUNT = FORMATION_PRESETS.length;
 let formationIndex = 0;
 let formationDragStartX = null;
+
+// Small mini-diagram of a preset's shape: RANGED_SLOTS rows stacked
+// vertically (filled = 🏹 box, empty = faint dashed outline), melee bands
+// drawn beside them — an aligned band level with its row, a boundary band
+// spanning the half-step between its two rows — with a single "ENEMY ->"
+// arrow on the right, same visual language as the old explainer diagrams.
+// `uid` keeps each slide's <marker> id unique since all slides exist in the
+// DOM at once (off-screen via transform, not display:none).
+function buildFormationPreviewSVG(preset, uid) {
+  const rowH = 20, padTop = 10, boxW = 38, boxH = 16, rangedX = 14, meleeX = 66;
+  const width = 200, height = padTop * 2 + RANGED_SLOTS * rowH;
+  const rangedSet = new Set(preset.ranged);
+  let rows = '';
+  for (let i = 0; i < RANGED_SLOTS; i++) {
+    const y = padTop + i * rowH + (rowH - boxH) / 2;
+    if (rangedSet.has(i)) {
+      rows += `<rect x="${rangedX}" y="${y}" width="${boxW}" height="${boxH}" rx="4" fill="#12304a" stroke="#4facfe" stroke-width="1.5"/>
+        <text x="${rangedX + boxW / 2}" y="${y + boxH / 2 + 4}" font-size="11" text-anchor="middle">🏹</text>`;
+    } else {
+      rows += `<rect x="${rangedX}" y="${y}" width="${boxW}" height="${boxH}" rx="4" fill="none" stroke="#444" stroke-width="1" stroke-dasharray="3,2" opacity="0.6"/>`;
+    }
+  }
+  let melee = '';
+  preset.melee.forEach(band => {
+    const y = band.type === 'aligned'
+      ? padTop + band.index * rowH + (rowH - boxH) / 2
+      : padTop + band.indices[0] * rowH + rowH / 2;
+    const h = band.type === 'aligned' ? boxH : rowH;
+    melee += `<rect x="${meleeX}" y="${y}" width="${boxW}" height="${h}" rx="4" fill="#3a2a12" stroke="#ffd700" stroke-width="1.5"/>
+      <text x="${meleeX + boxW / 2}" y="${y + h / 2 + 4}" font-size="12" text-anchor="middle">⚔️</text>`;
+  });
+  const midY = padTop + (RANGED_SLOTS * rowH) / 2;
+  return `<svg viewBox="0 0 ${width} ${height}" width="188" height="${Math.round(height * 188 / width)}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="fpArrow${uid}" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 Z" fill="#f5576c"/>
+      </marker>
+    </defs>
+    <text x="${width - 4}" y="${midY - 14}" font-size="8" fill="#f5576c" text-anchor="end">ENEMY</text>
+    <line x1="${width - 4}" y1="${midY}" x2="${meleeX + boxW + 8}" y2="${midY}" stroke="#f5576c" stroke-width="2" marker-end="url(#fpArrow${uid})"/>
+    ${rows}
+    ${melee}
+  </svg>`;
+}
+
+function buildFormationSlideEl(preset, uid) {
+  const el = document.createElement('div');
+  el.className = 'formation-slide';
+  el.innerHTML = `
+    <div class="formation-slide-title">${preset.name}</div>
+    <div class="formation-slide-blurb">${preset.blurb}</div>
+    ${buildFormationPreviewSVG(preset, uid)}
+  `;
+  return el;
+}
+
+let formationDots = [];
+FORMATION_PRESETS.forEach((preset, i) => {
+  formationTrack.appendChild(buildFormationSlideEl(preset, i));
+  const dot = document.createElement('span');
+  dot.className = 'formation-dot';
+  dot.dataset.i = i;
+  dot.onclick = () => goToFormationSlide(i);
+  formationDotsEl.appendChild(dot);
+  formationDots.push(dot);
+});
 
 function updateFormationTrack() {
   formationTrack.style.transform = `translateX(-${formationIndex * 100}%)`;
@@ -2544,11 +2727,54 @@ function openFormationModal() {
   formationModal.style.display = 'flex';
 }
 
+// Applies a preset's exact Ranged-row/Melee-band shape to the player's
+// deployment. Prefers reassigning whichever specific heroes the player had
+// already placed (any position, either type) into the preset's slots/bands,
+// falling back to the next available roster hero of the needed type for any
+// the player hadn't placed enough of; if the preset needs FEWER of a type
+// than the player already had out, the extras simply return to the roster.
+// This reorganizes an existing pick into an efficient shape rather than
+// discarding the player's choices outright.
+function applyFormationPreset(preset) {
+  const previouslyDeployed = [
+    ...playerPlacements.ranged.filter(id => id !== null),
+    ...playerPlacements.melee.map(entry => entry.charId)
+  ];
+  playerPlacements = { ranged: new Array(RANGED_SLOTS).fill(null), melee: [] };
+  deployAvailable = Array.from(new Set([...deployAvailable, ...previouslyDeployed]));
+  sortDeployAvailable();
+
+  function takeNextOfType(type) {
+    let id = previouslyDeployed.find(pid => deployAvailable.includes(pid) && charById(pid).type === type);
+    if (!id) id = deployAvailable.find(pid => charById(pid).type === type);
+    if (!id) return null;
+    deployAvailable = deployAvailable.filter(pid => pid !== id);
+    return id;
+  }
+
+  preset.ranged.forEach(rowIndex => {
+    const id = takeNextOfType('ranged');
+    if (id) playerPlacements.ranged[rowIndex] = id;
+  });
+  preset.melee.forEach(band => {
+    const id = takeNextOfType('melee');
+    if (id) playerPlacements.melee.push({ charId: id, band });
+  });
+
+  renderDeployRoster();
+  renderDeployBattlefield();
+  updateDeployStatus();
+  log(`Applied formation: ${preset.name}`);
+}
+
 document.getElementById('btn-formation').onclick = openFormationModal;
 document.getElementById('btn-formation-close').onclick = () => { formationModal.style.display = 'none'; };
 document.getElementById('formation-prev').onclick = () => goToFormationSlide(formationIndex - 1);
 document.getElementById('formation-next').onclick = () => goToFormationSlide(formationIndex + 1);
-formationDots.forEach((dot, i) => { dot.onclick = () => goToFormationSlide(i); });
+document.getElementById('btn-formation-apply').onclick = () => {
+  applyFormationPreset(FORMATION_PRESETS[formationIndex]);
+  formationModal.style.display = 'none';
+};
 
 // Swipe support: track the pointer's horizontal movement from pointerdown to
 // pointerup and advance one slide if it crosses a small threshold — works
