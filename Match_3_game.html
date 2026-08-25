@@ -274,12 +274,66 @@
       40% { box-shadow: 0 0 20px 6px #00ffaa; transform: scale(1.08); }
       100% { box-shadow: none; transform: scale(1); }
     }
+    /* Matched tiles fly to the mana bar of every living player hero of
+       that color as tiny glittering shards — see spawnManaShards(). Fixed
+       positioning + a left/top transition is simplest here since each
+       shard's start/end points are literal viewport coordinates read from
+       two unrelated elements (a board tile, a hero's mana bar). */
+    #shard-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 500;
+    }
+    .mana-shard {
+      position: fixed;
+      width: 7px;
+      height: 7px;
+      border-radius: 2px;
+      transform: rotate(45deg);
+      box-shadow: 0 0 6px currentColor, 0 0 2px #fff;
+      transition: left 0.5s cubic-bezier(0.25,0.4,0.35,1), top 0.5s cubic-bezier(0.25,0.4,0.35,1),
+                  opacity 0.5s ease, transform 0.5s ease;
+    }
     .hp-text {
       font-size: 0.62rem;
       line-height: 1;
       color: #f88;
       font-weight: bold;
       flex-shrink: 0;
+    }
+    /* Live battle cards only (see buildHeroCardEl) — a real depleting bar
+       instead of plain "7/7" text, same structure as .mana-bar-bg with the
+       number kept visible as an overlay. Deployment preview cards keep the
+       old plain .hp-text (always full pre-battle, a bar adds nothing there). */
+    .hp-bar-bg {
+      width: 92%;
+      height: 10px;
+      background: #0a0a12;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 1px;
+      border: 1px solid #555;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .hp-bar {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #ff5f5f, #d32f2f);
+      transition: width 0.35s ease-out;
+    }
+    .hp-num {
+      position: absolute;
+      left: 0; right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.5rem;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 1px 2px #000, 0 0 4px #000;
+      pointer-events: none;
+      text-align: center;
     }
     .card.player .mana-bar { background: linear-gradient(90deg, #00c6ff, #0072ff); }
     .card.enemy .mana-bar { background: linear-gradient(90deg, #f5576c, #f093fb); }
@@ -1138,7 +1192,10 @@ function buildHeroCardEl(h) {
     <div class="card-color-dot" style="background:${COLOR_HEX[h.color] || h.color}"></div>
     <div class="card-icon">${h.type === 'ranged' ? '🏹' : '⚔️'}</div>
     <div class="card-name">${h.name}</div>
-    <div class="hp-text">${h.hp}/${h.maxHp}</div>
+    <div class="hp-bar-bg">
+      <div class="hp-bar" style="width:${(h.hp / h.maxHp) * 100}%"></div>
+      <div class="hp-num">${h.hp}/${h.maxHp}</div>
+    </div>
     <div class="mana-bar-bg">
       <div class="mana-bar" style="width:${(h.mana / h.maxMana) * 100}%"></div>
       <div class="mana-num">${h.mana}/${h.maxMana}</div>
@@ -1290,8 +1347,10 @@ function updateHeroUI(h) {
   h.el.classList.toggle('acted', h.actedThisTurn && !h.dead);
   h.el.classList.toggle('selected', aimedTarget === h);
   h.el.classList.toggle('can-act', h.side === 'player' && canHeroAct(h));
-  const hpEl = h.el.querySelector('.hp-text');
-  if (hpEl) hpEl.textContent = `${h.hp}/${h.maxHp}`;
+  const hpBar = h.el.querySelector('.hp-bar');
+  if (hpBar) hpBar.style.width = `${(h.hp / h.maxHp) * 100}%`;
+  const hpNum = h.el.querySelector('.hp-num');
+  if (hpNum) hpNum.textContent = `${h.hp}/${h.maxHp}`;
   const bar = h.el.querySelector('.mana-bar');
   if (bar) {
     bar.style.width = `${(h.mana / h.maxMana) * 100}%`;
@@ -2205,6 +2264,60 @@ function applyGravityAndFill() {
   }
 }
 
+// Fixed overlay that hosts temporary shard particles (see spawnManaShards)
+// so they can fly freely across the page — from a board tile up to a
+// battlefield card's mana bar — independent of either element's own
+// stacking/overflow context.
+const shardLayer = document.createElement('div');
+shardLayer.id = 'shard-layer';
+document.body.appendChild(shardLayer);
+
+// Purely a visual flourish, fire-and-forget: spawns a few small glittering
+// "shards" that fly from a just-cleared tile's position to the mana bar of
+// every living player hero of that color. Never gates or delays any game
+// logic — grantMana() has already (or will already have) applied the real
+// mana synchronously; this just dramatizes where it went. A color with no
+// living hero to receive it simply spawns nothing (matches grantMana(),
+// which is a no-op for that case too).
+function spawnManaShards(x, y, color) {
+  const tileEl = getTileEl(x, y);
+  if (!tileEl || !color) return;
+  const tileRect = tileEl.getBoundingClientRect();
+  const startX = tileRect.left + tileRect.width / 2;
+  const startY = tileRect.top + tileRect.height / 2;
+
+  heroes.filter(h => h.side === 'player' && !h.dead && h.color === color && h.el).forEach(hero => {
+    const bar = hero.el.querySelector('.mana-bar-bg');
+    if (!bar) return;
+    const barRect = bar.getBoundingClientRect();
+    const endX = barRect.left + barRect.width / 2;
+    const endY = barRect.top + barRect.height / 2;
+    const hex = COLOR_HEX[color] || color;
+
+    for (let i = 0; i < 3; i++) {
+      const shard = document.createElement('div');
+      shard.className = 'mana-shard';
+      shard.style.background = hex;
+      shard.style.color = hex;
+      const jitterX = (Math.random() - 0.5) * 16;
+      const jitterY = (Math.random() - 0.5) * 16;
+      shard.style.left = `${startX + jitterX - 3.5}px`;
+      shard.style.top = `${startY + jitterY - 3.5}px`;
+      shard.style.opacity = '1';
+      shardLayer.appendChild(shard);
+      void shard.offsetWidth; // force the start position to paint before animating
+      const delay = i * 45;
+      setTimeout(() => {
+        shard.style.left = `${endX - 3.5}px`;
+        shard.style.top = `${endY - 3.5}px`;
+        shard.style.opacity = '0.2';
+        shard.style.transform = 'rotate(200deg) scale(0.5)';
+      }, delay);
+      setTimeout(() => shard.remove(), delay + 550);
+    }
+  });
+}
+
 // Grants 1 mana per tile to every living player hero of `color` — the base
 // rule shared by every match tier, and by each individual tile touched by
 // an Arcane Bomb blast or a Runic Crystal's color-clear (each pays out by
@@ -2535,6 +2648,7 @@ function processMatches(swapHint, activationSeeds) {
   processExplosionQueue(explosionQueue, 0, toClear, queuedKeys, logParts, () => {
     toClear.forEach(k => {
       const [cx, cy] = k.split(',').map(Number);
+      spawnManaShards(cx, cy, board[cy][cx]); // fire-and-forget visual flourish, before the cell's color is gone
       board[cy][cx] = null;
       boardSpecial[cy][cx] = null;
     });
@@ -2662,41 +2776,72 @@ function activateSpecialTap(x, y, type) {
   }, 120);
 }
 
-// Swaps two adjacent cells (color AND special status move together), then
-// checks whether the swap created a match or touched an Arcane Bomb (which
-// activates from any adjacent swap, matched or not) — reverts if neither
-// happened. A Runic Crystal can never be one half of a swap; dragging onto
-// or off of one is simply a no-op (use activateSpecialTap's direct-tap
-// path instead).
+// Performs the actual data swap, then a FLIP-style slide so the two tiles
+// visually glide to each other's grid position instead of just
+// "teleporting" the moment renderBoard() rebuilds them. Reused for a
+// revert too — swapping the same pair a second time restores the original
+// arrangement, sliding back the way it came.
+const SWAP_SLIDE_MS = 160;
+function animateTileSwap(x1, y1, x2, y2, onDone) {
+  const rect1 = getTileEl(x1, y1).getBoundingClientRect();
+  const rect2 = getTileEl(x2, y2).getBoundingClientRect();
+
+  const tmpColor = board[y1][x1], tmpSpecial = boardSpecial[y1][x1];
+  board[y1][x1] = board[y2][x2]; boardSpecial[y1][x1] = boardSpecial[y2][x2];
+  board[y2][x2] = tmpColor; boardSpecial[y2][x2] = tmpSpecial;
+  renderBoard();
+
+  const el1 = getTileEl(x1, y1); // now shows what used to be at (x2,y2)
+  const el2 = getTileEl(x2, y2); // now shows what used to be at (x1,y1)
+  el1.style.zIndex = '10';
+  el2.style.zIndex = '10';
+  el1.style.transition = 'none';
+  el2.style.transition = 'none';
+  el1.style.transform = `translate(${rect2.left - rect1.left}px, ${rect2.top - rect1.top}px)`;
+  el2.style.transform = `translate(${rect1.left - rect2.left}px, ${rect1.top - rect2.top}px)`;
+  void el1.offsetWidth; // force reflow so the jump above commits before animating back to translate(0,0)
+  requestAnimationFrame(() => {
+    el1.style.transition = `transform ${SWAP_SLIDE_MS}ms ease`;
+    el2.style.transition = `transform ${SWAP_SLIDE_MS}ms ease`;
+    el1.style.transform = 'translate(0,0)';
+    el2.style.transform = 'translate(0,0)';
+  });
+  setTimeout(onDone, SWAP_SLIDE_MS);
+}
+
+// Slides the two tiles to each other's position first (see animateTileSwap
+// above), then checks whether the swap created a match or touched an
+// Arcane Bomb (which activates from any adjacent swap, matched or not) —
+// reverts (with its own slide back) if neither happened. A Runic Crystal
+// can never be one half of a swap; dragging onto or off of one is simply a
+// no-op (use activateSpecialTap's direct-tap path instead).
 function attemptTileSwap(x1, y1, x2, y2) {
   if (x2 < 0 || x2 >= COLS || y2 < 0 || y2 >= ROWS) return; // dragged off the edge of the board
   if (!board[y1][x1] || !board[y2][x2]) return;
   if (boardSpecial[y1][x1] === 'crystal' || boardSpecial[y2][x2] === 'crystal') return;
 
-  const origColor = board[y1][x1], origSpecial = boardSpecial[y1][x1];
-  const destColor = board[y2][x2], destSpecial = boardSpecial[y2][x2];
-  board[y1][x1] = destColor; boardSpecial[y1][x1] = destSpecial;
-  board[y2][x2] = origColor; boardSpecial[y2][x2] = origSpecial;
-  renderBoard();
+  isAnimating = true;
+  setBoardLocked(true);
 
-  const {hasMatches} = findMatchedCells();
-  const activationSeeds = [];
-  if (boardSpecial[y1][x1] === 'bomb') activationSeeds.push({x: x1, y: y1, color: board[y1][x1], type: 'bomb'});
-  if (boardSpecial[y2][x2] === 'bomb') activationSeeds.push({x: x2, y: y2, color: board[y2][x2], type: 'bomb'});
+  animateTileSwap(x1, y1, x2, y2, () => {
+    const {hasMatches} = findMatchedCells();
+    const activationSeeds = [];
+    if (boardSpecial[y1][x1] === 'bomb') activationSeeds.push({x: x1, y: y1, color: board[y1][x1], type: 'bomb'});
+    if (boardSpecial[y2][x2] === 'bomb') activationSeeds.push({x: x2, y: y2, color: board[y2][x2], type: 'bomb'});
 
-  if (hasMatches || activationSeeds.length > 0) {
-    isAnimating = true;
-    swapUsedThisTurn = true; // a turn only gets one swap
-    setBoardLocked(true);
-    const swapHint = [{x: x1, y: y1}, {x: x2, y: y2}];
-    setTimeout(() => processMatches(swapHint, activationSeeds), 120);
-  } else {
-    // revert
-    board[y1][x1] = origColor; boardSpecial[y1][x1] = origSpecial;
-    board[y2][x2] = destColor; boardSpecial[y2][x2] = destSpecial;
-    renderBoard();
-    log('No match – swap reverted');
-  }
+    if (hasMatches || activationSeeds.length > 0) {
+      swapUsedThisTurn = true; // a turn only gets one swap
+      const swapHint = [{x: x1, y: y1}, {x: x2, y: y2}];
+      processMatches(swapHint, activationSeeds);
+    } else {
+      // revert: swap back with the same slide animation
+      animateTileSwap(x1, y1, x2, y2, () => {
+        isAnimating = false;
+        setBoardLocked(false);
+        log('No match – swap reverted');
+      });
+    }
+  });
 }
 
 // ---------- COMBAT ----------
