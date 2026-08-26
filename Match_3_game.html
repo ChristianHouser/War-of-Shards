@@ -47,6 +47,21 @@
     }
 
     /* ===== BATTLEFIELD (shared by deployment + battle) ===== */
+    /* Wraps #battlefield through #board-wrap so ONE map background (set by
+       pickRandomMapBackground()) can span both continuously — see the HTML
+       comment above #battle-scene for the full "underground Match-3"
+       reasoning. background-size:cover here means the image scales to fill
+       this wrapper's actual combined height (which varies with team size/
+       card count), typically cropping its sides more than a plain
+       battlefield-only background would; background-position:top keeps the
+       image's sky/scenery anchored to the top (near the battlefield) so its
+       own lower reaches consistently land near the bottom (near Match-3)
+       regardless of exactly how much of the image ends up cropped. */
+    #battle-scene {
+      background-size: cover;
+      background-position: top center;
+      background-repeat: no-repeat;
+    }
     /* Ranged always shows TEAM_CAP fixed slots (filled or empty); Melee is a
        free-form dynamic-length column. They are independent columns of
        standard-size cards — they no longer need to be pixel-aligned to each
@@ -129,6 +144,11 @@
       transition: transform 0.1s, box-shadow 0.15s;
       user-select: none;
       -webkit-touch-callout: none; /* iOS: suppress the long-press text-selection/callout menu on a draggable card */
+      -webkit-tap-highlight-color: transparent; /* Android/older mobile browsers otherwise flash a translucent grey
+                                                    rectangle over the whole tapped element on every tap — reads as
+                                                    exactly the "vague almost-transparent card" a real device would
+                                                    show around a now-chrome-free sprite-style card, even though
+                                                    nothing in this stylesheet actually draws a box there. */
       overflow: hidden;
       flex-shrink: 0;
     }
@@ -888,6 +908,16 @@
   <div class="info" id="info-text"></div>
   <div id="log">Ready. Build your team below.</div>
 
+  <!-- #battle-scene wraps everything from the battlefield down through the
+       Match-3 board so a single picked map background (pickRandomMapBackground())
+       can span both continuously, per direct instruction — the map's own
+       lower reaches (a stone/tiled "floor" in the art) land behind the
+       Match-3 grid, reading as "the match-3 section is underground." Only
+       actually carries a background image during battle (see
+       pickRandomMapBackground()/initDeployment()); #battlefield and
+       #board-wrap clear their own fills to transparent at that point so
+       this shared image shows through instead of being hidden behind them. -->
+  <div id="battle-scene">
   <div id="battlefield"></div>
 
   <!-- Formation(s) button + deployed count + Character Codex link: sit just
@@ -951,6 +981,7 @@
   <div id="board-wrap" style="display:none;">
     <div id="board"></div>
   </div>
+  </div> <!-- /#battle-scene -->
 
   <div id="turn-indicator" style="display:none; margin:6px 0; font-weight:bold; color:#0ff; font-size:0.9rem;">Your Turn</div>
   <div class="controls" id="battle-controls" style="display:none;">
@@ -1289,6 +1320,7 @@ let dragState = null;
 const boardEl = document.getElementById('board');
 const battlefieldEl = document.getElementById('battlefield');
 const boardWrapEl = document.getElementById('board-wrap');
+const battleSceneEl = document.getElementById('battle-scene');
 const infoTextEl = document.getElementById('info-text');
 
 function setBoardLocked(locked) {
@@ -1398,13 +1430,24 @@ function buildArmies() {
 }
 
 // Picks one of the 4 map backgrounds (day/night × 2 variants each) uniformly
-// at random and applies it as #battlefield's backdrop, layered under a flat
-// dark tint so the YOU/ENEMY labels and card content on top stay legible
-// against a busy painted scene. Called fresh from startBattle()/
-// restartBattle() so the map "changes every battle" per direct instruction.
+// at random and applies it to #battle-scene — the shared wrapper around
+// BOTH the battlefield AND the Match-3 board, per direct instruction ("the
+// backgrounds should appear not only behind the battlefield but also
+// visible to the bottom Match 3 section"). One continuous background-size:
+// cover image spans from the top of the battlefield to the bottom of the
+// board, so the same picture's sky/scenery naturally lands behind the
+// battlefield while its lower reaches (each map's stone/tiled "floor," per
+// the art) land behind the Match-3 grid — "the match 3 section is supposed
+// to look like it's underground." #battlefield and #board-wrap's own solid
+// fills are cleared to transparent so this shared image actually shows
+// through both boxes rather than being hidden behind their own separate
+// backgrounds. Called fresh from startBattle()/restartBattle() so the map
+// "changes every battle" per the earlier direct instruction.
 function pickRandomMapBackground() {
   const url = MAP_BACKGROUNDS[Math.floor(Math.random() * MAP_BACKGROUNDS.length)];
-  battlefieldEl.style.backgroundImage = `linear-gradient(rgba(10,10,20,0.55), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
+  battleSceneEl.style.backgroundImage = `linear-gradient(rgba(10,10,20,0.55), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
+  battlefieldEl.style.background = 'transparent';
+  boardWrapEl.style.background = 'transparent';
 }
 
 // Live battle cards show the sprite fully visible (no card box, no tint
@@ -1665,7 +1708,8 @@ function initDeployment() {
   deployColorsOpen = false;
   dragState = null;
   gamePhase = 'deploy';
-  battlefieldEl.style.backgroundImage = 'none'; // plain solid box until a battle actually picks a map
+  battleSceneEl.style.backgroundImage = 'none'; // plain solid boxes until a battle actually picks a map
+  battlefieldEl.style.background = ''; // revert to its own CSS default navy fill (falls back to #battlefield's stylesheet rule)
   setInfoText('deploy');
   document.getElementById('deploy-panel').style.display = 'block';
   document.getElementById('board-wrap').style.display = 'none';
