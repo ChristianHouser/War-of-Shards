@@ -133,6 +133,37 @@
       flex-shrink: 0;
     }
     .card:active { transform: scale(0.95); }
+    /* Live battle only (buildHeroCardEl always adds this) — strips the flat
+       "card" box look entirely so the sprite (see .hero-sprite) reads as a
+       standee on the battlefield rather than an icon in a colored box: no
+       background, no border, no fixed height (the card grows to fit its
+       real content — name line, square sprite, HP bar, mana bar — instead
+       of the old fixed 78px meant for a small icon). The can-act/selected/
+       special glow rings still work with no visible border to color, since
+       their box-shadow is independent of border and isn't clipped by it. */
+    .card.sprite-style {
+      height: auto;
+      background: none;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      overflow: visible;
+    }
+    /* The pose art itself (Idle by default, briefly swapped to Attack/
+       Impacted — see triggerHeroPose()), applied as a background-image set
+       inline via JS. A perfectly square box (matching the source art's own
+       1:1 canvas) with `contain` so the whole sprite always shows uncropped
+       — this IS "leaving the sprite fully visible," the point of moving HP/
+       mana below it instead of overlaying them on top like before. */
+    .hero-sprite {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
+      flex-shrink: 0;
+      pointer-events: none;
+    }
     .card.selected {
       box-shadow: 0 0 0 3px #00ffaa, 0 0 12px #00ffaa88;
       transform: scale(1.05);
@@ -218,6 +249,36 @@
       width: 12px; height: 12px;
       border-radius: 50%;
       border: 1px solid #000;
+    }
+    /* Live battle only (sprite-style cards): the color dot sits inline next
+       to the name instead of as a corner overlay — a corner-pinned absolute
+       dot (like .card-color-dot above, still used by the deployment preview
+       card) would sit right on top of the first character or two of the
+       name here, since the name is now the very first line of content
+       rather than sitting below an icon glyph. */
+    .card-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      width: 100%;
+      min-width: 0; /* lets .card-name's own text-overflow:ellipsis actually engage inside this flex row */
+    }
+    .card-color-dot-inline {
+      width: 10px; height: 10px;
+      min-width: 10px;
+      border-radius: 50%;
+      border: 1px solid #000;
+      flex-shrink: 0;
+    }
+    /* .card-name's own flex-shrink:0 (below) exists for its OLD context
+       (a plain flex-column .card, where the concern was overflow:hidden
+       crushing its height to 0) — inside this flex ROW it needs the
+       opposite: allowed to shrink so its own text-overflow:ellipsis can
+       actually engage once the dot+name combo doesn't fit. */
+    .card-header-row .card-name {
+      flex-shrink: 1;
+      min-width: 0;
     }
     /* Tap-to-place / tap-to-remove badge, upper-right corner of a card —
        the touch-friendly alternative to drag (see DECISIONS.md). No circle/
@@ -1334,33 +1395,38 @@ function pickRandomMapBackground() {
   battlefieldEl.style.backgroundImage = `linear-gradient(rgba(10,10,20,0.55), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
 }
 
-// Builds the layered background-image value for a card showing `url` —
-// a light-at-top/dark-at-bottom tint over the art itself, keeping the name
-// legible near the top while still showing most of the character clearly.
-// Shared by buildHeroCardEl() (Idle, at build time) and triggerHeroPose()
-// (Attack/Impacted, at trigger time) so both stay pixel-identical.
-function heroArtBackground(url) {
-  return `linear-gradient(rgba(10,10,20,0.15), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
+// Live battle cards show the sprite fully visible (no card box, no tint
+// overlay) with HP/mana below it, per direct request — so the background-
+// image is just the plain art URL now; the "light-top/dark-bottom tint for
+// legibility over overlaid text" that used to live here is gone along with
+// the text it was protecting (name/bars no longer sit on top of the art).
+function heroSpriteUrl(url) {
+  return `url("${encodeURI(url)}")`;
 }
 
 function buildHeroCardEl(h) {
   const card = document.createElement('div');
-  card.className = `card ${h.side}` + (h.isSpecial ? ' special' : '') + (h.dead ? ' dead' : '');
+  card.className = `card ${h.side} sprite-style` + (h.isSpecial ? ' special' : '') + (h.dead ? ' dead' : '');
   card.dataset.color = h.color;
-  // The art background replaces the emoji type-glyph once a skin is assigned
+  // The sprite replaces the emoji type-glyph once a skin is assigned
   // (always true in live battle — assignHeroArt() runs for every hero in
   // buildArmies()); the glyph is kept as a fallback for any other caller.
-  if (h.skin) {
-    card.style.backgroundImage = heroArtBackground(h.skin.idle);
-    card.style.backgroundSize = 'auto, contain';
-    card.style.backgroundPosition = 'center, center bottom';
-    card.style.backgroundRepeat = 'no-repeat, no-repeat';
-  }
-  const icon = h.skin ? '' : `<div class="card-icon">${h.type === 'ranged' ? '🏹' : '⚔️'}</div>`;
+  // The sprite's URL is set via the DOM property below, not inlined into
+  // this HTML string — a file path can itself contain characters (spaces
+  // are fine, but the principle matters) that would need careful escaping
+  // to safely nest inside an already-double-quoted style="" attribute;
+  // setting .style.backgroundImage as a plain JS property assignment (same
+  // as triggerHeroPose() already does for pose changes) sidesteps that
+  // entirely.
+  const sprite = h.skin
+    ? `<div class="hero-sprite"></div>`
+    : `<div class="card-icon">${h.type === 'ranged' ? '🏹' : '⚔️'}</div>`;
   card.innerHTML = `
-    ${icon}
-    <div class="card-color-dot" style="background:${COLOR_HEX[h.color] || h.color}"></div>
-    <div class="card-name">${h.name}</div>
+    <div class="card-header-row">
+      <div class="card-color-dot-inline" style="background:${COLOR_HEX[h.color] || h.color}"></div>
+      <div class="card-name">${h.name}</div>
+    </div>
+    ${sprite}
     <div class="hp-bar-bg">
       <div class="hp-bar" style="width:${(h.hp / h.maxHp) * 100}%"></div>
       <div class="hp-num">${h.hp}/${h.maxHp}</div>
@@ -1371,8 +1437,31 @@ function buildHeroCardEl(h) {
     </div>
     ${h.type === 'melee' ? `<div class="coverage-tag">${coverageLabel(h.coverage)}</div>` : ''}
   `;
+  if (h.skin) card.querySelector('.hero-sprite').style.backgroundImage = heroSpriteUrl(h.skin.idle);
   card.addEventListener('click', () => onHeroClick(h));
   return card;
+}
+
+// A footprint-matching (but invisible — see .battle-empty-slot) stand-in for
+// an unfilled Ranged slot, built from the exact same pieces (name line,
+// square sprite, HP/mana bars) a real sprite-style card has — so its natural
+// height matches a filled row's at any viewport width. This matters
+// functionally, not just visually: Melee band alignment measures every
+// Ranged row's live rect (filled or not), so a mismatched empty-row height
+// would throw off where a boundary card centers itself.
+function buildEmptySpriteSlot() {
+  const el = document.createElement('div');
+  el.className = 'card sprite-style battle-empty-slot not-clickable';
+  el.innerHTML = `
+    <div class="card-header-row">
+      <div class="card-color-dot-inline"></div>
+      <div class="card-name">&nbsp;</div>
+    </div>
+    <div class="hero-sprite"></div>
+    <div class="hp-bar-bg"><div class="hp-bar"></div></div>
+    <div class="mana-bar-bg"><div class="mana-bar"></div></div>
+  `;
+  return el;
 }
 
 // Briefly swaps a hero's card art to its Attack or Impacted pose, then
@@ -1385,11 +1474,14 @@ function buildHeroCardEl(h) {
 const HERO_POSE_DURATION_MS = 550;
 function triggerHeroPose(hero, pose) {
   if (!hero.skin || !hero.el) return;
+  const sprite = hero.el.querySelector('.hero-sprite');
+  if (!sprite) return;
   if (hero.poseTimeout) clearTimeout(hero.poseTimeout);
-  hero.el.style.backgroundImage = heroArtBackground(hero.skin[pose]);
+  sprite.style.backgroundImage = heroSpriteUrl(hero.skin[pose]);
   hero.poseTimeout = setTimeout(() => {
     hero.poseTimeout = null;
-    if (hero.el) hero.el.style.backgroundImage = heroArtBackground(hero.skin.idle);
+    const liveSprite = hero.el && hero.el.querySelector('.hero-sprite');
+    if (liveSprite) liveSprite.style.backgroundImage = heroSpriteUrl(hero.skin.idle);
   }, HERO_POSE_DURATION_MS);
 }
 
@@ -1456,8 +1548,7 @@ function renderBattlefield() {
       slotEl = buildHeroCardEl(hero);
       hero.el = slotEl;
     } else {
-      slotEl = document.createElement('div');
-      slotEl.className = 'card battle-empty-slot not-clickable';
+      slotEl = buildEmptySpriteSlot();
     }
     slotEl.dataset.role = 'player-ranged-slot';
     slotEl.dataset.slot = i;
