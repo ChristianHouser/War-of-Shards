@@ -18,6 +18,21 @@
       padding-bottom: 40px;
       overflow-x: hidden;
     }
+    /* During battle #battle-scene.battle-active is a fixed 100dvh grid that
+       already reserves its own bottom-buffer band (per direct request) — the
+       body's own padding (needed for breathing room around deployment's
+       natural-flow content) would otherwise add on top of that 100dvh and
+       push the page taller than one screen, plus min-height:100vh can
+       exceed the *currently visible* area on mobile browsers whose address
+       bar hasn't collapsed yet (100vh is the largest-possible viewport,
+       100dvh the current one). Toggled on by startBattle()/restartBattle(),
+       off by initDeployment(), same lifecycle as the battle-only elements
+       it affects. */
+    body.battle-mode {
+      padding: 0;
+      min-height: 100dvh;
+      overflow: hidden;
+    }
     h1 { font-size: 1.1rem; margin-bottom: 6px; color: #ffd700; }
     /* .info (the instructional blurb) and #log (the running message feed)
        are no longer shown on either screen, per direct request — kept in
@@ -73,6 +88,67 @@
       background-size: cover;
       background-position: top center;
       background-repeat: no-repeat;
+    }
+    /* Fixed viewport-percentage battle layout, per direct request: scenery
+       gets a fixed slice of the screen up top, the battlefield a fixed 50%
+       below it, the controls row takes only what it needs, Match-3 absorbs
+       whatever's left (the `1fr` track), and a small fixed slice at the very
+       bottom stays empty (phone case/bezel clearance). Percentages in
+       grid-template-rows resolve against the grid container's OWN height
+       (set here via 100dvh — the dynamic viewport height, since 100vh alone
+       can be taller than what's actually visible while a mobile browser's
+       address bar is showing), and `1fr` automatically claims "the
+       remainder" after every fixed/percentage/auto row is subtracted — no
+       manual math needed for the Match-3 band. Toggled on by
+       startBattle()/restartBattle(), off by initDeployment(); deployment's
+       natural content-flow, scrollable layout is completely untouched by
+       this rule since it never gets the class. Relies on exactly 5 visible
+       (non-display:none) direct children in this DOM order during battle:
+       #scenery-band, #battlefield, #end-turn-wrap, #board-wrap,
+       #bottom-buffer — every other direct child (#placement-controls,
+       #filter-toggle-wrap, #deploy-filter-bar, #deploy-panel) is
+       deployment-only and already display:none by the time this class is
+       applied, so CSS Grid's auto-placement skips them entirely. */
+    #battle-scene.battle-active {
+      display: grid;
+      grid-template-rows: 9% 50% auto 1fr 4%;
+      height: 100dvh;
+      overflow: hidden; /* safety net: nothing here should ever need to grow past its band */
+    }
+    /* Pure backdrop — the shared map background image on #battle-scene
+       itself shows through since this has no fill of its own. */
+    #scenery-band { display: none; }
+    #battle-scene.battle-active #scenery-band { display: block; }
+    #bottom-buffer { display: none; }
+    #battle-scene.battle-active #bottom-buffer { display: block; }
+    /* The battlefield row is a fixed 50% slice — its own height must be
+       driven by the grid row, not by however many heroes/cards it contains,
+       so team size never pushes the page taller. margin-bottom is dropped
+       here (rather than kept as extra space on top of the 100% row) since a
+       fixed percentage row can't grow to absorb it — the small gap it used
+       to provide is no longer needed once the row below (controls) is its
+       own dedicated `auto` track. */
+    #battle-scene.battle-active #battlefield {
+      height: 100%;
+      min-height: 0;
+      margin-bottom: 0;
+    }
+    #battle-scene.battle-active .bf-column {
+      height: 100%;
+    }
+    /* Every card inside a battle-mode column (Ranged's fixed 5 slots, the
+       enemy columns, and Melee's own invisible placeholder when empty)
+       divides its column's height evenly by flex-growing instead of sizing
+       to its own content — this is what lets fewer enemies/heroes render
+       proportionally larger rather than leaving dead space below a
+       content-sized stack. Real Melee hero cards are absolutely positioned
+       (see positionMeleeCardPairs()) and don't participate in this flex
+       sizing at all — those get an explicit pixel height set directly in
+       renderBattlefield() instead, measured from a real rendered Ranged
+       row. */
+    #battle-scene.battle-active .bf-column > .card {
+      flex: 1 1 0;
+      min-height: 0;
     }
     /* Ranged always shows TEAM_CAP fixed slots (filled or empty); Melee is a
        free-form dynamic-length column. They are independent columns of
@@ -200,16 +276,21 @@
        — this IS "leaving the sprite fully visible," the point of moving HP/
        mana below it instead of overlaying them on top like before. */
     .hero-sprite {
+      /* Fills whatever vertical space is left in its card after the header
+         row/HP bar/mana bar/coverage tag take their own small fixed
+         heights, rather than a fixed aspect-ratio square — the card's own
+         height is now dictated by the fixed-percentage battlefield row (see
+         #battle-scene.battle-active), not by its content, so the sprite
+         needs to flex to fill it instead of the other way around.
+         background-size:contain still keeps the art itself uncropped and
+         undistorted regardless of the resulting box's aspect ratio — a
+         non-square box just letterboxes on whichever axis has spare room. */
       width: 100%;
-      aspect-ratio: 1 / 1;
-      max-height: 40px; /* caps how tall 5 stacked Ranged rows get on a wide screen — width still
-                            drives the aspect-ratio square, so a capped row just letterboxes
-                            sideways rather than cropping the art; still "fully visible", just
-                            smaller, so the whole battlefield + Match-3 board fit one phone screen */
+      flex: 1 1 auto;
+      min-height: 0;
       background-size: contain;
       background-position: center;
       background-repeat: no-repeat;
-      flex-shrink: 0;
       pointer-events: none;
     }
     .card.selected {
@@ -643,11 +724,27 @@
     #board-wrap.locked {
       opacity: 0.5;
     }
+    /* Match-3 gets whatever's left after scenery/battlefield/controls/buffer
+       are subtracted (the `1fr` track on #battle-scene.battle-active) — the
+       wrap and the tile grid itself both need an explicit height:100% to
+       actually claim that space instead of shrinking to their own content,
+       and the rows switch from a fixed px height to 1fr so the 5 tile rows
+       divide it evenly (tiles may end up slightly non-square on some screen
+       ratios; there's no fixed aspect the board must keep here — filling
+       "the remainder" band takes priority, per direct request). */
+    #battle-scene.battle-active #board-wrap {
+      height: 100%;
+      min-height: 0;
+    }
     #board {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
       grid-template-rows: repeat(5, 44px);
       gap: 3px;
+    }
+    #battle-scene.battle-active #board {
+      height: 100%;
+      grid-template-rows: repeat(5, 1fr);
     }
     .tile {
       border-radius: 8px;
@@ -955,6 +1052,13 @@
        #board-wrap clear their own fills to transparent at that point so
        this shared image shows through instead of being hidden behind them. -->
   <div id="battle-scene">
+  <!-- Battle-only fixed grid row (see #battle-scene.battle-active): pure
+       backdrop, no content of its own — the shared map background image
+       (set on #battle-scene itself) shows through it, giving the top ~9%
+       of the screen to "scenery" before the battlefield begins, per direct
+       request for a fixed viewport-percentage layout. Hidden entirely
+       during deployment (default display:none). -->
+  <div id="scenery-band"></div>
   <div id="battlefield"></div>
 
   <!-- Formation(s) button + deployed count + Character Codex link: sit just
@@ -1000,6 +1104,15 @@
        row — both are absolutely positioned (see CSS) so End Turn stays
        genuinely centered on the row regardless of Auto Attack's own width. -->
   <div id="end-turn-wrap" style="display:none; width:100%; max-width:420px; margin:6px auto 0;">
+    <!-- Moved inside end-turn-wrap (was a standalone sibling after
+         #battle-scene) so it shares end-turn-wrap's existing show/hide
+         toggle (already identical — both flip together in startBattle()/
+         initDeployment()) and, more importantly, lands inside the "auto"
+         grid row of #battle-scene.battle-active instead of adding its own
+         extra row below the whole scene — a standalone sibling there would
+         push the page taller than 100dvh and break "fits one phone screen
+         at a glance." -->
+    <div id="turn-indicator" style="display:none; margin:0 0 4px; font-weight:bold; color:#0ff; font-size:0.9rem; text-align:center;">Your Turn</div>
     <div id="battle-controls-row">
       <button id="btn-auto-attack" title="Auto-resolve attacks each turn: random valid targets, Heroes sometimes bank mana for their Special instead of attacking">▶ Auto: OFF</button>
       <button id="btn-end-turn" title="Bank remaining mana and end your turn">End Turn</button>
@@ -1022,9 +1135,12 @@
   <div id="board-wrap" style="display:none;">
     <div id="board"></div>
   </div>
+  <!-- Battle-only fixed grid row: empty space reserved at the very bottom
+       of the screen (per direct request) so on-screen content never sits
+       flush against a phone's rounded corners/case bezel/home indicator.
+       Hidden entirely during deployment. -->
+  <div id="bottom-buffer"></div>
   </div> <!-- /#battle-scene -->
-
-  <div id="turn-indicator" style="display:none; margin:6px 0; font-weight:bold; color:#0ff; font-size:0.9rem;">Your Turn</div>
 
   <!-- Special Attack Choice Modal -->
   <div id="attack-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
@@ -1652,6 +1768,18 @@ function renderBattlefield() {
   }
   battlefieldEl.appendChild(rangedCol);
 
+  // A real rendered Ranged row's height — used below to give absolutely-
+  // positioned Melee cards an explicit height. Melee cards don't participate
+  // in .bf-column's flex sizing (position:absolute removes them from flex
+  // flow entirely), so without this their .hero-sprite (flex:1 1 auto) has
+  // nothing to flex against and collapses. Measured after rangedCol is
+  // actually in the DOM so getBoundingClientRect() reflects the real,
+  // fixed-percentage-driven layout rather than an un-laid-out guess. Queries
+  // for `.card` specifically (not firstElementChild) since a column's actual
+  // first child is its .bf-column-label, not a slot.
+  const rangedRowCard = rangedCol.querySelector('.card');
+  const rangedRowHeight = rangedRowCard ? rangedRowCard.getBoundingClientRect().height : 0;
+
   // --- Player Melee: same band-pixel-aligned absolute positioning as
   // deployment (see renderDeployBattlefield / layoutMeleeCards), using each
   // hero's `band` (preserved from deployment in buildArmies/createHeroFromChar)
@@ -1679,6 +1807,7 @@ function renderBattlefield() {
       card.style.position = 'absolute';
       card.style.left = '0';
       card.style.width = '100%';
+      if (rangedRowHeight > 0) card.style.height = rangedRowHeight + 'px';
       hero.el = card;
       meleeCol.appendChild(card);
       meleePairs.push({ el: card, band: hero.band });
@@ -1752,6 +1881,8 @@ function initDeployment() {
   battleSceneEl.style.backgroundImage = 'none'; // plain solid boxes until a battle actually picks a map
   battlefieldEl.style.background = ''; // revert to its own CSS default navy fill (falls back to #battlefield's stylesheet rule)
   titleEl.style.display = ''; // page title shows during deployment, hidden during battle (see startBattle())
+  battleSceneEl.classList.remove('battle-active'); // fixed viewport-percentage grid is battle-only; deployment stays natural-flow/scrollable
+  document.body.classList.remove('battle-mode');
   setInfoText('deploy');
   document.getElementById('deploy-panel').style.display = 'block';
   document.getElementById('board-wrap').style.display = 'none';
@@ -3916,6 +4047,8 @@ function startBattle() {
   setInfoText('battle');
   titleEl.style.display = 'none'; // no text at the top of the battlefield during battle, per direct request —
                                    // .info/#log are already always hidden on both screens (see their CSS rule)
+  battleSceneEl.classList.add('battle-active'); // fixed 9%/50%/auto/1fr/4% viewport-percentage grid — see CSS
+  document.body.classList.add('battle-mode');
   document.getElementById('deploy-panel').style.display = 'none';
   document.getElementById('board-wrap').style.display = 'block';
   document.getElementById('turn-indicator').style.display = 'block';
