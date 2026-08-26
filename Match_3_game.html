@@ -58,6 +58,18 @@
        own lower reaches consistently land near the bottom (near Match-3)
        regardless of exactly how much of the image ends up cropped. */
     #battle-scene {
+      /* Explicit width is required here, not optional: body is a flex column
+         with align-items:center, so a flex child with no declared width of
+         its own shrink-wraps to its children's natural content size instead
+         of filling the available 390-420px — and since every child here
+         (#battlefield, #end-turn-wrap, ...) declares its OWN width:100%,
+         that becomes circular/indeterminate without this. A previous,
+         differently-shaped version of this exact bug is already documented
+         elsewhere in this file (see DECISIONS.md) — this is a fresh
+         instance of the same root cause on this new wrapper. */
+      width: 100%;
+      max-width: 420px;
+      margin: 0 auto;
       background-size: cover;
       background-position: top center;
       background-repeat: no-repeat;
@@ -82,11 +94,11 @@
       gap: 4px;
       width: 100%;
       max-width: 420px;
-      margin-bottom: 10px;
+      margin-bottom: 6px;
       background-color: #16213e; /* shows during deployment, before any battle has picked a map */
       background-size: cover;
       background-position: center;
-      padding: 8px;
+      padding: 6px;
       border-radius: 10px;
       border: 2px solid #0f3460;
     }
@@ -190,6 +202,10 @@
     .hero-sprite {
       width: 100%;
       aspect-ratio: 1 / 1;
+      max-height: 40px; /* caps how tall 5 stacked Ranged rows get on a wide screen — width still
+                            drives the aspect-ratio square, so a capped row just letterboxes
+                            sideways rather than cropping the art; still "fully visible", just
+                            smaller, so the whole battlefield + Match-3 board fit one phone screen */
       background-size: contain;
       background-position: center;
       background-repeat: no-repeat;
@@ -620,7 +636,7 @@
       max-width: 420px;
       background: #0f3460;
       border-radius: 10px;
-      padding: 8px;
+      padding: 6px;
       border: 2px solid #e94560;
       transition: opacity 0.25s;
     }
@@ -630,7 +646,7 @@
     #board {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
-      grid-template-rows: repeat(5, 48px);
+      grid-template-rows: repeat(5, 44px);
       gap: 3px;
     }
     .tile {
@@ -701,13 +717,16 @@
     button:active { background: #c81e45; }
     button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
 
-    /* ===== Battle screen controls row (Auto Attack far left, End Turn centered) ===== */
+    /* ===== Battle screen controls row (Auto Attack far left, End Turn
+       centered, Leave buttons far right) ===== */
     /* Absolute positioning, not flex/grid: End Turn must stay pixel-centered
        on the row regardless of Auto Attack's own width — and that width
        genuinely changes (its label toggles between "OFF"/"ON", different
        lengths), which would throw off any flex/grid trick that balances
        the two based on a snapshot of Auto Attack's current size. Anchoring
-       End Turn to the row's own 50% is independent of that entirely. */
+       End Turn to the row's own 50% is independent of that entirely. The
+       Leave buttons (moved here from below the Match-3 board, per direct
+       request) are anchored the same way, mirrored to the right. */
     #battle-controls-row {
       position: relative;
       width: 100%;
@@ -739,6 +758,24 @@
       top: 50%;
       transform: translate(-50%, -50%);
       background: #27ae60;
+      white-space: nowrap;
+    }
+    #battle-leave-group {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      gap: 4px;
+    }
+    #battle-leave-group button {
+      background: #16213e;
+      color: #ff8fa3;
+      border: 2px solid #e94560;
+      border-radius: 14px;
+      padding: 6px 10px;
+      font-size: 0.65rem;
+      font-weight: bold;
       white-space: nowrap;
     }
 
@@ -903,7 +940,7 @@
   </style>
 </head>
 <body>
-  <h1>Match-3 × Battlefield Test</h1>
+  <h1 id="page-title">Match-3 × Battlefield Test</h1>
 
   <div class="info" id="info-text"></div>
   <div id="log">Ready. Build your team below.</div>
@@ -966,6 +1003,10 @@
     <div id="battle-controls-row">
       <button id="btn-auto-attack" title="Auto-resolve attacks each turn: random valid targets, Heroes sometimes bank mana for their Special instead of attacking">▶ Auto: OFF</button>
       <button id="btn-end-turn" title="Bank remaining mana and end your turn">End Turn</button>
+      <div id="battle-leave-group">
+        <button id="btn-restart-battle" title="Restart Battle">Leave</button>
+        <button id="btn-redeploy" title="Change Deployment">Leave</button>
+      </div>
     </div>
   </div>
 
@@ -984,10 +1025,6 @@
   </div> <!-- /#battle-scene -->
 
   <div id="turn-indicator" style="display:none; margin:6px 0; font-weight:bold; color:#0ff; font-size:0.9rem;">Your Turn</div>
-  <div class="controls" id="battle-controls" style="display:none;">
-    <button id="btn-restart-battle">Restart Battle</button>
-    <button id="btn-redeploy">Change Deployment</button>
-  </div>
 
   <!-- Special Attack Choice Modal -->
   <div id="attack-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
@@ -1322,6 +1359,7 @@ const battlefieldEl = document.getElementById('battlefield');
 const boardWrapEl = document.getElementById('board-wrap');
 const battleSceneEl = document.getElementById('battle-scene');
 const infoTextEl = document.getElementById('info-text');
+const titleEl = document.getElementById('page-title');
 
 function setBoardLocked(locked) {
   if (boardWrapEl) boardWrapEl.classList.toggle('locked', locked);
@@ -1442,10 +1480,13 @@ function buildArmies() {
 // fills are cleared to transparent so this shared image actually shows
 // through both boxes rather than being hidden behind their own separate
 // backgrounds. Called fresh from startBattle()/restartBattle() so the map
-// "changes every battle" per the earlier direct instruction.
+// "changes every battle" per the earlier direct instruction. No dark tint
+// layered over the art (a previous version did) — per direct feedback the
+// backgrounds should show "vibrant, invisible as the original work," i.e.
+// exactly the artist's own colors with nothing dimming them.
 function pickRandomMapBackground() {
   const url = MAP_BACKGROUNDS[Math.floor(Math.random() * MAP_BACKGROUNDS.length)];
-  battleSceneEl.style.backgroundImage = `linear-gradient(rgba(10,10,20,0.55), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
+  battleSceneEl.style.backgroundImage = `url("${encodeURI(url)}")`;
   battlefieldEl.style.background = 'transparent';
   boardWrapEl.style.background = 'transparent';
 }
@@ -1710,11 +1751,11 @@ function initDeployment() {
   gamePhase = 'deploy';
   battleSceneEl.style.backgroundImage = 'none'; // plain solid boxes until a battle actually picks a map
   battlefieldEl.style.background = ''; // revert to its own CSS default navy fill (falls back to #battlefield's stylesheet rule)
+  titleEl.style.display = ''; // page title shows during deployment, hidden during battle (see startBattle())
   setInfoText('deploy');
   document.getElementById('deploy-panel').style.display = 'block';
   document.getElementById('board-wrap').style.display = 'none';
   document.getElementById('turn-indicator').style.display = 'none';
-  document.getElementById('battle-controls').style.display = 'none';
   document.getElementById('end-turn-wrap').style.display = 'none';
   document.getElementById('placement-controls').style.display = 'flex';
   document.getElementById('filter-toggle-wrap').style.display = 'flex';
@@ -3873,10 +3914,11 @@ function startBattle() {
   }
   gamePhase = 'battle';
   setInfoText('battle');
+  titleEl.style.display = 'none'; // no text at the top of the battlefield during battle, per direct request —
+                                   // .info/#log are already always hidden on both screens (see their CSS rule)
   document.getElementById('deploy-panel').style.display = 'none';
   document.getElementById('board-wrap').style.display = 'block';
   document.getElementById('turn-indicator').style.display = 'block';
-  document.getElementById('battle-controls').style.display = 'flex';
   document.getElementById('end-turn-wrap').style.display = 'block';
   document.getElementById('placement-controls').style.display = 'none';
   document.getElementById('filter-toggle-wrap').style.display = 'none';
@@ -3901,6 +3943,8 @@ function startBattle() {
 
   const teamList = heroes.filter(h => h.side === 'player').map(h => h.name).join(', ');
   log(`Battle start! Your team: ${teamList}`);
+  window.scrollTo(0, 0); // Start Battle is often tapped after scrolling through the roster —
+                          // without this the battlefield can load already scrolled past its own top
 }
 
 function restartBattle() {
@@ -3921,12 +3965,14 @@ function restartBattle() {
   renderBattlefield();
   updateTurnUI();
   log('Battle restarted — same team, fresh board.');
+  window.scrollTo(0, 0);
 }
 
 function goToDeployment() {
   heroes = [];
   initDeployment();
   log('Back to deployment — pick your team.');
+  window.scrollTo(0, 0);
 }
 
 document.getElementById('btn-start-battle').onclick = startBattle;
