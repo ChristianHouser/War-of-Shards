@@ -149,6 +149,18 @@
       padding: 0;
       overflow: visible;
     }
+    /* `.card[data-color="..."]` below (the color-tinted gradient) has the
+       SAME specificity as `.card.sprite-style` above (one class + one
+       attribute selector vs. two classes) and is declared later in the
+       stylesheet, so without this it wins the tiebreak and the gradient
+       background comes right back — a real bug caught by inspecting the
+       card's actual computed background, not just eyeballing a screenshot.
+       The extra `[data-color]` here (matching any value) bumps this
+       selector's specificity strictly above that rule's, regardless of
+       source order. */
+    .card.sprite-style[data-color] {
+      background: none;
+    }
     /* The pose art itself (Idle by default, briefly swapped to Attack/
        Impacted — see triggerHeroPose()), applied as a background-image set
        inline via JS. A perfectly square box (matching the source art's own
