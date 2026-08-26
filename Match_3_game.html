@@ -68,7 +68,9 @@
       width: 100%;
       max-width: 420px;
       margin-bottom: 10px;
-      background: #16213e;
+      background-color: #16213e; /* shows during deployment, before any battle has picked a map */
+      background-size: cover;
+      background-position: center;
       padding: 8px;
       border-radius: 10px;
       border: 2px solid #0f3460;
@@ -180,6 +182,16 @@
       visibility: hidden;
     }
     .card-icon { font-size: 1.05rem; line-height: 1; margin-top: 1px; flex-shrink: 0; }
+    /* Character pose art (Idle by default, briefly swapped to Attack/Impacted
+       — see triggerHeroPose()) is applied as a CSS background-image on the
+       card itself (heroArtBackground(), set inline via JS) rather than an
+       <img> child — backgrounds always paint below all of an element's own
+       content, guaranteed by the spec, with none of the stacking-context
+       pitfalls a positioned/negative-z-index child image ran into (a plain
+       position:relative element with no explicit z-index doesn't actually
+       establish its own stacking context, so that child's negative z-index
+       silently escaped past the card and rendered behind unrelated page
+       content instead of just this card's own background). */
     .card-name {
       /* flex-shrink:0 matters here specifically: this element also has
          overflow:hidden (for the ellipsis), and a flex child with overflow
@@ -198,6 +210,7 @@
       text-align: center;
       font-weight: 600;
       flex-shrink: 0;
+      text-shadow: 0 1px 2px #000, 0 0 4px #000; /* legible over busy character art now sitting behind it */
     }
     .card-color-dot {
       position: absolute;
@@ -1144,6 +1157,37 @@ function coverageLabel(coverage) {
   return `🛡 R${coverage.lanes[0] + 1}+R${coverage.lanes[1] + 1}`;
 }
 
+// ---------- BATTLE ART ASSETS ----------
+// Pixel-art battlefield backgrounds and character pose sets, added directly
+// to the repo under /Artwork (not generated). There are only a handful of
+// finished character skins (3 Ranged, 4 Melee) versus 45 named roster
+// characters, so per direct instruction any deployed character just gets
+// assigned one of these skins by type by (see assignHeroArt()) rather than
+// needing 1:1 matching art — "if they select more than three of either
+// type, use a copy of that same type" (the pool naturally repeats via `%`
+// once a side has more of that type deployed than the pool has entries).
+const RANGED_SKINS = [
+  { idle: 'Artwork/Characters/Female Archer/Idle Bow-woman.png', attack: 'Artwork/Characters/Female Archer/Attacking Bow-woman.png', impacted: 'Artwork/Characters/Female Archer/Impacted Bow-woman.png' },
+  { idle: 'Artwork/Characters/Male Armored Bowman/Male Idle Armored Bowman.png', attack: 'Artwork/Characters/Male Armored Bowman/Male Armored Bowman.png', impacted: 'Artwork/Characters/Male Armored Bowman/Male Impacted Bowman.png' },
+  { idle: 'Artwork/Characters/Male Heavy Bowman/Idle Male Heavy Bowman.png', attack: 'Artwork/Characters/Male Heavy Bowman/Male Heavy Bowman.png', impacted: 'Artwork/Characters/Male Heavy Bowman/Impacted Male Heavy Bowman.png' }
+];
+const MELEE_SKINS = [
+  { idle: 'Artwork/Characters/Male Armored Spearman/Idle Armored Spearman.png', attack: 'Artwork/Characters/Male Armored Spearman/Attacking Armored Spearman.png', impacted: 'Artwork/Characters/Male Armored Spearman/Impacted Armored Spearman.png' },
+  { idle: 'Artwork/Characters/Male Spearman/Idle Spearman.png', attack: 'Artwork/Characters/Male Spearman/Attacking Spearman.png', impacted: 'Artwork/Characters/Male Spearman/Impacted Spearman.png' },
+  { idle: 'Artwork/Characters/Male Swordman/Idle Swordman.png', attack: 'Artwork/Characters/Male Swordman/Attacking Swordman.png', impacted: 'Artwork/Characters/Male Swordman/Impacted Swordman.png' },
+  { idle: 'Artwork/Characters/Male Warhammer/Idle Warhammer1.png', attack: 'Artwork/Characters/Male Warhammer/Attacking Warhammer1.png', impacted: 'Artwork/Characters/Male Warhammer/Impacted Warhammer1.png' }
+];
+// One is picked uniformly at random per battle (see pickRandomMapBackground(),
+// called from startBattle()/restartBattle()) — day and night, and both of
+// each's two variants, all in one flat pool per direct instruction ("random
+// day and night maps, changes every battle").
+const MAP_BACKGROUNDS = [
+  'Artwork/Battlefield Backgrounds/Day Forest Map.png',
+  'Artwork/Battlefield Backgrounds/Day Forest Map2.png',
+  'Artwork/Battlefield Backgrounds/Night Forest Map.png',
+  'Artwork/Battlefield Backgrounds/Night Forest Map2.png'
+];
+
 let board = [];          // board[y][x] = color string
 let boardSpecial = [];   // boardSpecial[y][x] = null | 'bomb' | 'crystal' (parallel to board)
 let heroes = [];         // live combat heroes (only populated once battle starts)
@@ -1237,8 +1281,26 @@ function createHeroFromChar(charDef, side, posInfo) {
                                    // card to the same Ranged row/gap it was snapped to during deployment
                                    // (playerPlacements.ranged never changes mid-battle, so the band stays
                                    // valid even for a Melee guarding an empty/never-filled Ranged slot).
+    skin: null,        // {idle,attack,impacted} image URLs — assigned in assignHeroArt(), below
+    poseTimeout: null, // pending "revert to idle" timer for the current attack/impacted flash
     el: null
   };
+}
+
+// Assigns each hero one of the (far fewer than 45) finished character art
+// skins, grouped by side+type so a side's own Ranged/Melee each cycle
+// through their own pool independently — per direct instruction, whichever
+// specific roster characters the player or enemy actually has just gets
+// mapped onto "the three Ranged and three Melee" skins in deployment order,
+// wrapping back to the start of the pool (`% pool.length`) once a side has
+// more of that type than the pool has entries ("use a copy of that type").
+function assignHeroArt() {
+  ['player', 'enemy'].forEach(side => {
+    [['ranged', RANGED_SKINS], ['melee', MELEE_SKINS]].forEach(([type, pool]) => {
+      heroes.filter(h => h.side === side && h.type === type)
+        .forEach((h, i) => { h.skin = pool[i % pool.length]; });
+    });
+  });
 }
 
 function buildArmies() {
@@ -1259,15 +1321,45 @@ function buildArmies() {
   ENEMY_TEAM.melee.forEach(entry => {
     heroes.push(createHeroFromChar(charById(entry.charId), 'enemy', { coverage: entry.coverage }));
   });
+  assignHeroArt();
+}
+
+// Picks one of the 4 map backgrounds (day/night × 2 variants each) uniformly
+// at random and applies it as #battlefield's backdrop, layered under a flat
+// dark tint so the YOU/ENEMY labels and card content on top stay legible
+// against a busy painted scene. Called fresh from startBattle()/
+// restartBattle() so the map "changes every battle" per direct instruction.
+function pickRandomMapBackground() {
+  const url = MAP_BACKGROUNDS[Math.floor(Math.random() * MAP_BACKGROUNDS.length)];
+  battlefieldEl.style.backgroundImage = `linear-gradient(rgba(10,10,20,0.55), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
+}
+
+// Builds the layered background-image value for a card showing `url` —
+// a light-at-top/dark-at-bottom tint over the art itself, keeping the name
+// legible near the top while still showing most of the character clearly.
+// Shared by buildHeroCardEl() (Idle, at build time) and triggerHeroPose()
+// (Attack/Impacted, at trigger time) so both stay pixel-identical.
+function heroArtBackground(url) {
+  return `linear-gradient(rgba(10,10,20,0.15), rgba(10,10,20,0.55)), url("${encodeURI(url)}")`;
 }
 
 function buildHeroCardEl(h) {
   const card = document.createElement('div');
   card.className = `card ${h.side}` + (h.isSpecial ? ' special' : '') + (h.dead ? ' dead' : '');
   card.dataset.color = h.color;
+  // The art background replaces the emoji type-glyph once a skin is assigned
+  // (always true in live battle — assignHeroArt() runs for every hero in
+  // buildArmies()); the glyph is kept as a fallback for any other caller.
+  if (h.skin) {
+    card.style.backgroundImage = heroArtBackground(h.skin.idle);
+    card.style.backgroundSize = 'auto, contain';
+    card.style.backgroundPosition = 'center, center bottom';
+    card.style.backgroundRepeat = 'no-repeat, no-repeat';
+  }
+  const icon = h.skin ? '' : `<div class="card-icon">${h.type === 'ranged' ? '🏹' : '⚔️'}</div>`;
   card.innerHTML = `
+    ${icon}
     <div class="card-color-dot" style="background:${COLOR_HEX[h.color] || h.color}"></div>
-    <div class="card-icon">${h.type === 'ranged' ? '🏹' : '⚔️'}</div>
     <div class="card-name">${h.name}</div>
     <div class="hp-bar-bg">
       <div class="hp-bar" style="width:${(h.hp / h.maxHp) * 100}%"></div>
@@ -1281,6 +1373,24 @@ function buildHeroCardEl(h) {
   `;
   card.addEventListener('click', () => onHeroClick(h));
   return card;
+}
+
+// Briefly swaps a hero's card art to its Attack or Impacted pose, then
+// reverts to Idle after HERO_POSE_DURATION_MS — a fire-and-forget visual
+// flourish, same spirit as the mana shard particles: it never gates or
+// delays any game logic, just dramatizes what already happened. Clears any
+// pending revert first so a hero hit again (or attacking again) mid-flash
+// doesn't have an earlier timer snap it back to Idle out from under the
+// newer pose.
+const HERO_POSE_DURATION_MS = 550;
+function triggerHeroPose(hero, pose) {
+  if (!hero.skin || !hero.el) return;
+  if (hero.poseTimeout) clearTimeout(hero.poseTimeout);
+  hero.el.style.backgroundImage = heroArtBackground(hero.skin[pose]);
+  hero.poseTimeout = setTimeout(() => {
+    hero.poseTimeout = null;
+    if (hero.el) hero.el.style.backgroundImage = heroArtBackground(hero.skin.idle);
+  }, HERO_POSE_DURATION_MS);
 }
 
 // Positions a set of {el, band} pairs (live Melee hero cards, absolutely
@@ -1452,6 +1562,7 @@ function initDeployment() {
   deployColorsOpen = false;
   dragState = null;
   gamePhase = 'deploy';
+  battlefieldEl.style.backgroundImage = 'none'; // plain solid box until a battle actually picks a map
   setInfoText('deploy');
   document.getElementById('deploy-panel').style.display = 'block';
   document.getElementById('board-wrap').style.display = 'none';
@@ -2443,6 +2554,7 @@ function grantMana(color, amount) {
 function dealBoardDamage(target, dmg, sourceLabel) {
   if (!target || target.dead) return;
   target.hp -= dmg;
+  triggerHeroPose(target, 'impacted');
   if (target.hp <= 0) {
     target.hp = 0;
     target.dead = true;
@@ -3375,7 +3487,9 @@ function performAttack(attacker, target, attackType) {
   }
 
   attacker.mana -= cost;
+  triggerHeroPose(attacker, 'attack');
   target.hp -= dmg;
+  triggerHeroPose(target, 'impacted');
   if (target.hp <= 0) {
     target.hp = 0;
     target.dead = true;
@@ -3634,6 +3748,7 @@ function startBattle() {
 
   fillBoardNoMatches();
   renderBoard();
+  pickRandomMapBackground();
   renderBattlefield();
   updateTurnUI();
 
@@ -3655,6 +3770,7 @@ function restartBattle() {
   if (modal) modal.style.display = 'none';
   fillBoardNoMatches();
   renderBoard();
+  pickRandomMapBackground();
   renderBattlefield();
   updateTurnUI();
   log('Battle restarted — same team, fresh board.');
