@@ -311,10 +311,6 @@
       filter: grayscale(1);
       pointer-events: none;
     }
-    .card.acted {
-      opacity: 0.5;
-      filter: grayscale(0.7);
-    }
     .card.special {
       border-color: #c0c0c0;
       box-shadow: 0 0 6px #c0c0c088;
@@ -1841,7 +1837,6 @@ function renderBattlefield() {
 function updateHeroUI(h) {
   if (!h.el) return;
   h.el.classList.toggle('dead', h.dead);
-  h.el.classList.toggle('acted', h.actedThisTurn && !h.dead);
   h.el.classList.toggle('selected', aimedTarget === h);
   h.el.classList.toggle('can-act', h.side === 'player' && canHeroAct(h));
   const hpBar = h.el.querySelector('.hp-bar');

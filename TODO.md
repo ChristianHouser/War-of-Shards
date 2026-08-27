@@ -3,6 +3,12 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-26, absolute latest) — Fixed: characters looked faded/less visible whenever they changed pose
+- [x] Direct report: "When characters change poses for any reason, they fade or are less visible. Keep them fully visible." Root cause wasn't the pose swap itself — `performAttack()` sets `actedThisTurn = true` right after triggering the attacker's Attack pose, and the old `.card.acted { opacity:0.5; filter:grayscale(0.7); }` rule then dimmed the card for the rest of the turn, starting right as the pose animation began. The two events are unrelated mechanisms that just happened to fire back-to-back, making it look like posing itself caused the fade.
+- [x] Removed `.card.acted`'s CSS rule entirely and the now-inert `classList.toggle('acted', ...)` call in `updateHeroUI()`. `actedThisTurn` is untouched as game-logic state (still gates re-attacking, the `.can-act` glow, and End Turn) — only the redundant dimming *visual* was removed. `.card.dead`'s fade is intentionally unchanged (a genuinely different, more permanent status).
+- [x] Verified via Playwright: performing a real attack now leaves the attacker's computed `opacity: 1` / `filter: none` immediately, mid-pose, and after the pose reverts to Idle, while `actedThisTurn` still correctly reads `true` and no `acted` class exists anywhere in the DOM. Followed up with a real-browser screenshot of a fresh battle confirming sprites render normally with no regression.
+- [x] Updated CLAUDE.md and context/GAME_MECHANICS.md.
+
 ## Recently Done (2026-08-26, latest of all) — Battle card cleanup: no names, minimized mana/HP bars, no You/Enemy labels, enemy sprites face left
 Four bundled direct requests, all scoped to the live battle screen:
 - [x] **Mana bar**: removed the `.mana-num` text overlay entirely (no replacement) and halved `.mana-bar-bg`'s height (12px → 6px, freed up now that it doesn't need room for legible overlay text). `.mana-bar`'s fill-width math is unchanged.
