@@ -3,6 +3,11 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-26, latest) — Removed the "Your Turn / Enemy Turn" text from the battle screen
+- [x] Direct request: "Remove the text in from the battle page 'Your turn - swap two tiles, then attack'." `startBattle()` no longer sets `#turn-indicator`'s `display` to `'block'`, so it stays at its CSS default `display:none` permanently — same treatment already used for `.info`/`#log` and the page title. `updateTurnUI()` is untouched (still harmlessly updates the hidden element's text/color on every turn change), so no other turn logic needed to change.
+- [x] Verified via Playwright: `#turn-indicator`'s computed `display` is `none` immediately after `startBattle()`, its `textContent` is still being set correctly under the hood, the controls row (`#end-turn-wrap`) shrinks cleanly to just the buttons with no leftover gap, and the page still fits exactly one viewport (`bodyScrollHeight === innerHeight`).
+- [x] Updated CLAUDE.md and context/GAME_MECHANICS.md.
+
 ## Recently Done (2026-08-26, later) — Added a 5th battlefield map background
 - [x] User provided a new pixel-art map directly (a meadow scene running down into visible dirt/tree-roots at the bottom of the same canvas) — saved as `Artwork/Battlefield Backgrounds/Day Forest Map3.png` (941×1672, matching the other "Map" variants' portrait canvas size) and added as a 5th entry in `MAP_BACKGROUNDS`. No other code changes needed: `pickRandomMapBackground()` already picks uniformly at random from whatever's in that array, and the image's own composition (grass → roots) already lines up with the existing `background-position:top center` / shared `#battle-scene` wrapper behavior that puts a map's lower reaches behind the Match-3 board — if anything this map makes the "underground" effect read more literally than the existing stone-floor maps.
 - [x] Verified via Playwright: the new image loads with no failed requests, forcing it directly renders correctly (grass at battlefield level, roots/dirt visible behind the Match-3 board), and it comes up correctly in the random `pickRandomMapBackground()` rotation alongside the other 4.

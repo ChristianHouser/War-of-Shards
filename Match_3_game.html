@@ -4052,7 +4052,12 @@ function startBattle() {
   document.body.classList.add('battle-mode');
   document.getElementById('deploy-panel').style.display = 'none';
   document.getElementById('board-wrap').style.display = 'block';
-  document.getElementById('turn-indicator').style.display = 'block';
+  // #turn-indicator itself is left permanently hidden (see its CSS default
+  // display:none) per direct request to remove the "Your Turn — swap two
+  // tiles, then attack" text from the battle screen — same treatment as
+  // .info/#log elsewhere in this file: kept in the DOM (updateTurnUI() still
+  // updates its text/color harmlessly) rather than removed outright, since
+  // deleting the element would break updateTurnUI()'s unguarded lookup.
   document.getElementById('end-turn-wrap').style.display = 'block';
   document.getElementById('placement-controls').style.display = 'none';
   document.getElementById('filter-toggle-wrap').style.display = 'none';
