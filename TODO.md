@@ -3,6 +3,17 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-26, latest of all) — Battle card cleanup: no names, minimized mana/HP bars, no You/Enemy labels, enemy sprites face left
+Four bundled direct requests, all scoped to the live battle screen:
+- [x] **Mana bar**: removed the `.mana-num` text overlay entirely (no replacement) and halved `.mana-bar-bg`'s height (12px → 6px, freed up now that it doesn't need room for legible overlay text). `.mana-bar`'s fill-width math is unchanged.
+- [x] **HP bar**: `.hp-num` now shows only `${h.hp}` instead of `${h.hp}/${h.maxHp}` — the bar's fill width still reflects the full `hp/maxHp` ratio, only the overlay number's text changed.
+- [x] **Removed "YOU"/"ENEMY" column headers**: `renderBattlefield()`'s four `makeColumnEl()` calls now pass icon-only labels (🏹/⚔️), matching how deployment's own columns already look. Side is still legible from left/right position plus the `.side-divider` line.
+- [x] **Enemy sprites now face left**: `.card.enemy .hero-sprite { transform: scaleX(-1); }` — a pure CSS mirror, no new art needed, applies to all three poses (Idle/Attack/Impacted) automatically.
+- [x] **Removed character names from cards**: `.card-header-row` now holds only the color dot; `buildEmptySpriteSlot()`'s matching placeholder updated the same way so empty-row height still tracks a real card's.
+- [x] Deliberately left untouched: the Special-attack choice popup (still shows the hero's name in its title) and deployment's boxed preview cards (still show name + HP text) — neither was mentioned and both are separate UI surfaces.
+- [x] Verified via Playwright: zero `.card-name`/`.mana-num` elements exist anywhere on the battle screen, `.hp-num` reads just the current HP value, `.mana-bar-bg` computes to 6px tall, all four column labels are icon-only, and enemy `.hero-sprite` elements compute a `scaleX(-1)` transform while player ones don't. Followed up with a real-browser screenshot (plus a zoomed crop of an enemy archer) confirming the mirror renders cleanly with no visual artifacts.
+- [x] Updated CLAUDE.md and context/GAME_MECHANICS.md.
+
 ## Recently Done (2026-08-26, even later) — Restart Battle button relabeled from "Leave" back to "Restart"
 - [x] Direct follow-up request: "change the 'Leave' button that's supposed to restart the battle to 'Restart'." `#btn-restart-battle`'s visible label changed from "Leave" to "Restart" (its `title` tooltip, already "Restart Battle," is unchanged); `#btn-redeploy` keeps its "Leave" label — no other code touched, since only the button's text content needed to change.
 - [x] Verified via Playwright: `#btn-restart-battle` now reads "Restart" (tooltip still "Restart Battle"), `#btn-redeploy` still reads "Leave," and clicking Restart still correctly resets HP/board for a fresh battle with the same team.

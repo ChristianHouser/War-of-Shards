@@ -293,6 +293,14 @@
       background-repeat: no-repeat;
       pointer-events: none;
     }
+    /* Enemy sprites mirror horizontally so they visually face the player's
+       side (left) instead of matching the player's own sprites' facing —
+       per direct request. The art itself has only one orientation per pose;
+       this is a pure CSS flip, so it applies uniformly to Idle/Attack/
+       Impacted without needing separate mirrored art assets. */
+    .card.enemy .hero-sprite {
+      transform: scaleX(-1);
+    }
     .card.selected {
       box-shadow: 0 0 0 3px #00ffaa, 0 0 12px #00ffaa88;
       transform: scale(1.05);
@@ -430,7 +438,7 @@
     .card-action-btn.remove { color: #e74c3c; }
     .mana-bar-bg {
       width: 92%;
-      height: 12px;
+      height: 6px; /* half of the previous 12px, per direct request — no number overlay anymore (see .mana-bar-bg's removed .mana-num) so the bar doesn't need room for legible text */
       background: #0a0a12;
       border-radius: 5px;
       overflow: hidden;
@@ -445,18 +453,6 @@
       background: linear-gradient(90deg, #00e5ff, #00a0ff);
       transition: width 0.35s ease-out;
       box-shadow: 0 0 8px #00e5ff;
-    }
-    .mana-num {
-      position: absolute;
-      left: 0; right: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      font-size: 0.58rem;
-      font-weight: 800;
-      color: #fff;
-      text-shadow: 0 1px 2px #000, 0 0 4px #000;
-      pointer-events: none;
-      text-align: center;
     }
     .card.gained {
       animation: manaFlash 0.6s ease;
@@ -1637,16 +1633,14 @@ function buildHeroCardEl(h) {
   card.innerHTML = `
     <div class="card-header-row">
       <div class="card-color-dot-inline" style="background:${COLOR_HEX[h.color] || h.color}"></div>
-      <div class="card-name">${h.name}</div>
     </div>
     ${sprite}
     <div class="hp-bar-bg">
       <div class="hp-bar" style="width:${(h.hp / h.maxHp) * 100}%"></div>
-      <div class="hp-num">${h.hp}/${h.maxHp}</div>
+      <div class="hp-num">${h.hp}</div>
     </div>
     <div class="mana-bar-bg">
       <div class="mana-bar" style="width:${(h.mana / h.maxMana) * 100}%"></div>
-      <div class="mana-num">${h.mana}/${h.maxMana}</div>
     </div>
     ${h.type === 'melee' ? `<div class="coverage-tag">${coverageLabel(h.coverage)}</div>` : ''}
   `;
@@ -1668,7 +1662,6 @@ function buildEmptySpriteSlot() {
   el.innerHTML = `
     <div class="card-header-row">
       <div class="card-color-dot-inline"></div>
-      <div class="card-name">&nbsp;</div>
     </div>
     <div class="hero-sprite"></div>
     <div class="hp-bar-bg"><div class="hp-bar"></div></div>
@@ -1751,7 +1744,7 @@ function renderBattlefield() {
   // true the moment battle starts. It still occupies its row (visibility, not
   // display:none) so the grid position/spacing — and the Ranged rects Melee
   // band-positioning depends on — stay exactly what they were in deployment. ---
-  const rangedCol = makeColumnEl('player', 'YOU 🏹');
+  const rangedCol = makeColumnEl('player', '🏹');
   const playerRangedByLane = {};
   heroes.filter(h => h.side === 'player' && h.type === 'ranged').forEach(h => { playerRangedByLane[h.laneIndex] = h; });
   for (let i = 0; i < RANGED_SLOTS; i++) {
@@ -1786,7 +1779,7 @@ function renderBattlefield() {
   // hero's `band` (preserved from deployment in buildArmies/createHeroFromChar)
   // rather than sorting into a flat list — a card stays level with whichever
   // Ranged row/gap the player snapped it to, exactly as it looked pre-battle. ---
-  const meleeCol = makeColumnEl('player', 'YOU ⚔️');
+  const meleeCol = makeColumnEl('player', '⚔️');
   meleeCol.dataset.role = 'player-melee-dropzone';
   // No .dropzone-hint here (unlike deployment) — the dashed "placement
   // lining" is a drag-target affordance, and nothing is draggable once the
@@ -1821,8 +1814,8 @@ function renderBattlefield() {
   // unchanged from before, and matches how the deployment screen also shows
   // the enemy team (a plain centered list, no fixed-grid/band alignment). ---
   const enemyCols = [
-    { type: 'melee', label: 'ENEMY ⚔️' },
-    { type: 'ranged', label: 'ENEMY 🏹' }
+    { type: 'melee', label: '⚔️' },
+    { type: 'ranged', label: '🏹' }
   ];
   enemyCols.forEach(colDef => {
     const col = makeColumnEl('enemy', colDef.label);
@@ -1854,14 +1847,12 @@ function updateHeroUI(h) {
   const hpBar = h.el.querySelector('.hp-bar');
   if (hpBar) hpBar.style.width = `${(h.hp / h.maxHp) * 100}%`;
   const hpNum = h.el.querySelector('.hp-num');
-  if (hpNum) hpNum.textContent = `${h.hp}/${h.maxHp}`;
+  if (hpNum) hpNum.textContent = `${h.hp}`;
   const bar = h.el.querySelector('.mana-bar');
   if (bar) {
     bar.style.width = `${(h.mana / h.maxMana) * 100}%`;
     bar.classList.toggle('mana-full', h.isSpecial && h.mana >= h.maxMana);
   }
-  const num = h.el.querySelector('.mana-num');
-  if (num) num.textContent = `${h.mana}/${h.maxMana}`;
   updateEndTurnButtonState();
 }
 
