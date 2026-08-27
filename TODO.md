@@ -3,6 +3,11 @@
 ## Current Focus
 Lock in core combat + resource rules so any AI can safely work on the project.
 
+## Recently Done (2026-08-26, even later) — Restart Battle button relabeled from "Leave" back to "Restart"
+- [x] Direct follow-up request: "change the 'Leave' button that's supposed to restart the battle to 'Restart'." `#btn-restart-battle`'s visible label changed from "Leave" to "Restart" (its `title` tooltip, already "Restart Battle," is unchanged); `#btn-redeploy` keeps its "Leave" label — no other code touched, since only the button's text content needed to change.
+- [x] Verified via Playwright: `#btn-restart-battle` now reads "Restart" (tooltip still "Restart Battle"), `#btn-redeploy` still reads "Leave," and clicking Restart still correctly resets HP/board for a fresh battle with the same team.
+- [x] Updated CLAUDE.md and context/GAME_MECHANICS.md.
+
 ## Recently Done (2026-08-26, latest) — Removed the "Your Turn / Enemy Turn" text from the battle screen
 - [x] Direct request: "Remove the text in from the battle page 'Your turn - swap two tiles, then attack'." `startBattle()` no longer sets `#turn-indicator`'s `display` to `'block'`, so it stays at its CSS default `display:none` permanently — same treatment already used for `.info`/`#log` and the page title. `updateTurnUI()` is untouched (still harmlessly updates the hidden element's text/color on every turn change), so no other turn logic needed to change.
 - [x] Verified via Playwright: `#turn-indicator`'s computed `display` is `none` immediately after `startBattle()`, its `textContent` is still being set correctly under the hood, the controls row (`#end-turn-wrap`) shrinks cleanly to just the buttons with no leftover gap, and the page still fits exactly one viewport (`bodyScrollHeight === innerHeight`).
